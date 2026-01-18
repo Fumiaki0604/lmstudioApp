@@ -1,7 +1,9 @@
 import json
 import time
+import base64
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import requests
 import trafilatura
@@ -33,6 +35,9 @@ SUMMARY_ADDON = """追加ルール（URL要約）:
 
 STORE_DIR = Path.home() / ".lmstudio_assistant"
 PROMPTS_FILE = STORE_DIR / "prompts.json"
+SETTINGS_FILE = STORE_DIR / "settings.json"
+SPEAKERS_FILE = Path(__file__).parent / "speakers_all.json"
+TTS_QUEST_API = "https://api.tts.quest/v3/voicevox/synthesis"
 
 
 # =============================
@@ -74,12 +79,180 @@ def current_buddy_prompt() -> str:
 
 
 # =============================
+# Settings (API keys etc.)
+# =============================
+def _default_settings():
+    return {"tts_api_key": ""}
+
+
+def load_settings() -> dict:
+    try:
+        if SETTINGS_FILE.exists():
+            return json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return _default_settings()
+
+
+def save_settings(settings: dict) -> None:
+    STORE_DIR.mkdir(parents=True, exist_ok=True)
+    SETTINGS_FILE.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def get_tts_api_key() -> str:
+    settings = st.session_state.get("app_settings", {})
+    return settings.get("tts_api_key", "")
+
+
+# =============================
+# VOICEVOX (TTS Quest API)
+# =============================
+@st.cache_data
+def load_speakers() -> list:
+    """speakers_all.json から話者一覧を読み込む"""
+    if SPEAKERS_FILE.exists():
+        return json.loads(SPEAKERS_FILE.read_text(encoding="utf-8"))
+    return []
+
+
+def get_speaker_options() -> dict:
+    """話者とスタイルの選択肢を作成 {表示名: speaker_id}"""
+    speakers = load_speakers()
+    options = {}
+    for sp in speakers:
+        name = sp.get("name", "")
+        for style in sp.get("styles", []):
+            if style.get("type") == "talk":
+                style_name = style.get("name", "")
+                speaker_id = style.get("id")
+                label = f"{name}（{style_name}）" if style_name else name
+                options[label] = speaker_id
+    return options
+
+
+def split_text_for_tts(text: str, max_len: int = 200) -> list:
+    """テキストを句読点で分割し、max_len以下のチャンクに"""
+    if len(text) <= max_len:
+        return [text]
+
+    chunks = []
+    current = ""
+    # 句読点で分割（優先度: 。 → ！ → ？ → 、 → 改行）
+    delimiters = ["。", "！", "？", "!", "?", "、", "\n"]
+
+    i = 0
+    while i < len(text):
+        char = text[i]
+        current += char
+
+        # 区切り文字を見つけたら、そこで区切る
+        if char in delimiters and len(current) >= 30:
+            if len(current) <= max_len:
+                chunks.append(current.strip())
+                current = ""
+        # max_lenを超えそうなら強制分割
+        elif len(current) >= max_len:
+            # 最後の区切り文字を探す
+            last_delim = -1
+            for d in delimiters:
+                pos = current.rfind(d)
+                if pos > last_delim:
+                    last_delim = pos
+            if last_delim > 30:
+                chunks.append(current[:last_delim + 1].strip())
+                current = current[last_delim + 1:]
+            else:
+                chunks.append(current.strip())
+                current = ""
+        i += 1
+
+    if current.strip():
+        chunks.append(current.strip())
+
+    return [c for c in chunks if c]
+
+
+def synthesize_voice(text: str, speaker_id: int, api_key: str = "", timeout: int = 30) -> tuple:
+    """TTS Quest API で音声合成し、(mp3データ, エラーメッセージ)を返す（1チャンク分）"""
+    try:
+        params = {"text": text, "speaker": speaker_id}
+        if api_key:
+            params["key"] = api_key
+        r = requests.get(
+            TTS_QUEST_API,
+            params=params,
+            timeout=timeout,
+        )
+        r.raise_for_status()
+        data = r.json()
+
+        if not data.get("success"):
+            return None, f"API returned success=false: {data}"
+
+        # mp3Base64があれば即座に返す（APIキー使用時）
+        if "mp3Base64" in data:
+            return base64.b64decode(data["mp3Base64"]), None
+
+        # 非同期生成の場合: audioStatusUrlで完了を待つ
+        status_url = data.get("audioStatusUrl")
+        mp3_url = data.get("mp3DownloadUrl")
+
+        if status_url and mp3_url:
+            # 最大20秒待機（1秒間隔でポーリング）
+            for i in range(20):
+                status_r = requests.get(status_url, timeout=10)
+                status_data = status_r.json()
+                if status_data.get("isAudioReady"):
+                    mp3_r = requests.get(mp3_url, timeout=timeout)
+                    mp3_r.raise_for_status()
+                    return mp3_r.content, None
+                if status_data.get("isAudioError"):
+                    return None, f"Audio generation error: {status_data}"
+                time.sleep(1)
+            return None, f"Timeout after 20s polling (last status: {status_data})"
+        return None, "No audioStatusUrl or mp3DownloadUrl in response"
+    except Exception as e:
+        return None, f"Exception: {e}"
+
+
+def synthesize_voice_full(text: str, speaker_id: int, api_key: str = "", timeout: int = 30) -> tuple:
+    """長文テキストを分割して音声合成し、連結したmp3データを返す"""
+    chunks = split_text_for_tts(text, max_len=200)
+    if not chunks:
+        return None, "No text to synthesize"
+
+    audio_parts = []
+    for i, chunk in enumerate(chunks):
+        audio_data, error = synthesize_voice(chunk, speaker_id, api_key, timeout)
+        if error:
+            return None, f"Chunk {i+1}/{len(chunks)} failed: {error}"
+        if audio_data:
+            audio_parts.append(audio_data)
+
+    if not audio_parts:
+        return None, "No audio generated"
+
+    # MP3は単純に連結可能（フレーム単位なので）
+    return b"".join(audio_parts), None
+
+
+# =============================
 # LM Studio helpers
 # =============================
+EMBEDDING_PREFIXES = ("text-embedding-", "embedding-", "nomic-embed-")
+
+
+def is_chat_model(model_id: str) -> bool:
+    """エンベディング専用モデルを除外する"""
+    lower = model_id.lower()
+    return not any(lower.startswith(p) for p in EMBEDDING_PREFIXES)
+
+
 def lmstudio_models(base_url: str, timeout: int = 3):
     r = requests.get(base_url.rstrip("/") + "/models", timeout=timeout)
     r.raise_for_status()
-    return [m["id"] for m in r.json().get("data", [])]
+    all_models = [m["id"] for m in r.json().get("data", [])]
+    return [m for m in all_models if is_chat_model(m)]
 
 
 def call_lmstudio_chat_messages(
@@ -184,6 +357,8 @@ if "last_user_prompt" not in st.session_state:
     st.session_state["last_user_prompt"] = ""
 if "prompt_store" not in st.session_state:
     st.session_state["prompt_store"] = load_store()
+if "app_settings" not in st.session_state:
+    st.session_state["app_settings"] = load_settings()
 
 # ---- sidebar ----
 with st.sidebar:
@@ -223,7 +398,22 @@ with st.sidebar:
     store = st.session_state["prompt_store"]
     active_name = store.get("active", "default")
     st.caption(f"現在の相棒プロンプト: **{active_name}**")
-    st.caption("※編集は⚙️設定タブで行います（ここには表示しません）。")
+    st.caption("※編集は⚙️設定タブで行います。")
+
+    st.divider()
+    st.header("🔊 音声読み上げ")
+    tts_enabled = st.checkbox("返答を読み上げる", value=False)
+    speaker_options = get_speaker_options()
+    if speaker_options:
+        speaker_names = list(speaker_options.keys())
+        # デフォルトは「ずんだもん（ノーマル）」
+        default_idx = next((i for i, n in enumerate(speaker_names) if "ずんだもん" in n and "ノーマル" in n), 0)
+        selected_speaker = st.selectbox("話者", speaker_names, index=default_idx)
+        speaker_id = speaker_options[selected_speaker]
+    else:
+        st.warning("speakers_all.json が見つかりません")
+        tts_enabled = False
+        speaker_id = 3  # fallback
 
 if not lm_ok:
     st.stop()
@@ -263,6 +453,21 @@ with tab_chat:
     for msg in st.session_state["chat_messages"]:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+
+    # 最後の音声があれば再生（非表示で自動再生）
+    if "last_audio" in st.session_state and st.session_state["last_audio"]:
+        audio_b64 = base64.b64encode(st.session_state["last_audio"]).decode()
+        st.markdown(
+            f'<audio autoplay style="display:none;"><source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3"></audio>',
+            unsafe_allow_html=True,
+        )
+        # 再生後はクリア（連続再生防止）
+        st.session_state["last_audio"] = None
+
+    # TTS エラーがあれば表示
+    if "tts_error" in st.session_state and st.session_state["tts_error"]:
+        st.warning(f"🔊 音声生成失敗: {st.session_state['tts_error']}")
+        st.session_state["tts_error"] = None
 
     # 入力バーに被らないためのスペーサー
     st.markdown('<div class="spacer"></div>', unsafe_allow_html=True)
@@ -307,6 +512,16 @@ with tab_chat:
                 reply = f"ごめん、今ちょい失敗した。エラー: {e}"
 
         st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
+
+        # 音声読み上げ
+        if tts_enabled and reply:
+            with st.spinner("🔊 音声生成中…"):
+                tts_key = get_tts_api_key()
+                audio_data, tts_error = synthesize_voice_full(reply, speaker_id, api_key=tts_key)
+                if audio_data:
+                    st.session_state["last_audio"] = audio_data
+                elif tts_error:
+                    st.session_state["tts_error"] = tts_error
 
         # 送信後は再描画して最新ログを表示
         st.rerun()
@@ -447,3 +662,28 @@ with tab_settings:
                 save_store(store)
                 st.success(f"削除しました: {selected}")
                 st.rerun()
+
+    st.divider()
+    st.subheader("🔑 API設定")
+
+    app_settings = st.session_state["app_settings"]
+    current_key = app_settings.get("tts_api_key", "")
+
+    tts_api_key_input = st.text_input(
+        "TTS Quest APIキー",
+        value=current_key,
+        type="password",
+        placeholder="APIキーを入力（なくても動作しますが制限あり）",
+        help="https://tts.quest/ でAPIキーを取得できます"
+    )
+
+    if st.button("💾 APIキーを保存"):
+        app_settings["tts_api_key"] = tts_api_key_input.strip()
+        st.session_state["app_settings"] = app_settings
+        save_settings(app_settings)
+        st.success("APIキーを保存しました。")
+
+    if current_key:
+        st.caption("✅ APIキー設定済み")
+    else:
+        st.caption("⚠️ APIキー未設定（制限付きで動作）")
