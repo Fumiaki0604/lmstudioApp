@@ -107,27 +107,53 @@ def get_tts_api_key() -> str:
 # =============================
 # VOICEVOX (TTS Quest API)
 # =============================
-@st.cache_data
+@st.cache_data(ttl=60)
 def load_speakers() -> list:
-    """speakers_all.json から話者一覧を読み込む"""
+    """speakers_all.json から話者一覧を読み込む（60秒でキャッシュ更新）"""
     if SPEAKERS_FILE.exists():
         return json.loads(SPEAKERS_FILE.read_text(encoding="utf-8"))
     return []
 
 
-def get_speaker_options() -> dict:
-    """話者とスタイルの選択肢を作成 {表示名: speaker_id}"""
+def get_speaker_data() -> dict:
+    """話者データを構造化して返す
+    Returns: {
+        キャラ名: {
+            "personality": str or None,
+            "calls_profile": {"first_person": str, "second_person": str} or None,
+            "styles": {スタイル名: speaker_id, ...}
+        }, ...
+    }
+    """
     speakers = load_speakers()
-    options = {}
+    data = {}
     for sp in speakers:
         name = sp.get("name", "")
+        if not name:
+            continue
+        profile = sp.get("dormitory_profile", {}) or {}
+        personality = profile.get("personality")
+        calls = sp.get("calls_profile", {}) or {}
+        first_person = calls.get("first_person")
+        second_person = calls.get("second_person")
+        calls_info = None
+        if first_person or second_person:
+            calls_info = {"first_person": first_person, "second_person": second_person}
+
+        styles = {}
         for style in sp.get("styles", []):
             if style.get("type") == "talk":
-                style_name = style.get("name", "")
+                style_name = style.get("name", "ノーマル")
                 speaker_id = style.get("id")
-                label = f"{name}（{style_name}）" if style_name else name
-                options[label] = speaker_id
-    return options
+                styles[style_name] = speaker_id
+
+        if styles:
+            data[name] = {
+                "personality": personality,
+                "calls_profile": calls_info,
+                "styles": styles,
+            }
+    return data
 
 
 def split_text_for_tts(text: str, max_len: int = 200) -> list:
@@ -215,7 +241,7 @@ def synthesize_voice(text: str, speaker_id: int, api_key: str = "", timeout: int
         return None, f"Exception: {e}"
 
 
-def synthesize_voice_full(text: str, speaker_id: int, api_key: str = "", timeout: int = 30) -> tuple:
+def synthesize_voice_full(text: str, speaker_id: int, api_key: str = "", timeout: int = 30, max_retries: int = 2) -> tuple:
     """長文テキストを分割して音声合成し、連結したmp3データを返す"""
     chunks = split_text_for_tts(text, max_len=200)
     if not chunks:
@@ -223,11 +249,24 @@ def synthesize_voice_full(text: str, speaker_id: int, api_key: str = "", timeout
 
     audio_parts = []
     for i, chunk in enumerate(chunks):
-        audio_data, error = synthesize_voice(chunk, speaker_id, api_key, timeout)
-        if error:
-            return None, f"Chunk {i+1}/{len(chunks)} failed: {error}"
-        if audio_data:
-            audio_parts.append(audio_data)
+        # チャンク間に待機を入れてAPI負荷を軽減
+        if i > 0:
+            time.sleep(0.5)
+
+        # リトライ付きで音声生成
+        audio_data = None
+        last_error = None
+        for attempt in range(max_retries + 1):
+            if attempt > 0:
+                time.sleep(1.0)  # リトライ前に待機
+            audio_data, error = synthesize_voice(chunk, speaker_id, api_key, timeout)
+            if audio_data:
+                break
+            last_error = error
+
+        if not audio_data:
+            return None, f"Chunk {i+1}/{len(chunks)} failed after {max_retries+1} attempts: {last_error}"
+        audio_parts.append(audio_data)
 
     if not audio_parts:
         return None, "No audio generated"
@@ -403,17 +442,42 @@ with st.sidebar:
     st.divider()
     st.header("🔊 音声読み上げ")
     tts_enabled = st.checkbox("返答を読み上げる", value=False)
-    speaker_options = get_speaker_options()
-    if speaker_options:
-        speaker_names = list(speaker_options.keys())
-        # デフォルトは「ずんだもん（ノーマル）」
-        default_idx = next((i for i, n in enumerate(speaker_names) if "ずんだもん" in n and "ノーマル" in n), 0)
-        selected_speaker = st.selectbox("話者", speaker_names, index=default_idx)
-        speaker_id = speaker_options[selected_speaker]
+    speaker_data = get_speaker_data()
+    if speaker_data:
+        char_names = list(speaker_data.keys())
+        # デフォルトは「ずんだもん」
+        default_char_idx = next((i for i, n in enumerate(char_names) if "ずんだもん" in n), 0)
+        selected_char = st.selectbox("キャラクター", char_names, index=default_char_idx)
+
+        char_info = speaker_data[selected_char]
+        style_names = list(char_info["styles"].keys())
+        # デフォルトは「ノーマル」
+        default_style_idx = next((i for i, s in enumerate(style_names) if s == "ノーマル"), 0)
+        selected_style = st.selectbox("スタイル", style_names, index=default_style_idx)
+
+        speaker_id = char_info["styles"][selected_style]
+        speaker_personality = char_info["personality"]
+        speaker_calls_profile = char_info["calls_profile"]
+
+        # キャラ連動プロンプト
+        char_link_enabled = st.checkbox("キャラ連動プロンプト", value=False,
+            help="ONにすると話者の性格に合わせた返答になります")
+        if char_link_enabled and speaker_personality:
+            st.caption(f"🎭 {speaker_personality}")
+        elif char_link_enabled and not speaker_personality:
+            st.caption("⚠️ このキャラクターの性格情報はありません")
+        # 一人称・二人称の表示
+        if char_link_enabled and speaker_calls_profile:
+            fp = speaker_calls_profile.get("first_person") or "?"
+            sp_person = speaker_calls_profile.get("second_person") or "?"
+            st.caption(f"👤 一人称: {fp} / 二人称: {sp_person}")
     else:
         st.warning("speakers_all.json が見つかりません")
         tts_enabled = False
         speaker_id = 3  # fallback
+        speaker_personality = None
+        speaker_calls_profile = None
+        char_link_enabled = False
 
 if not lm_ok:
     st.stop()
@@ -494,6 +558,23 @@ with tab_chat:
         st.session_state["chat_messages"].append({"role": "user", "content": user_prompt})
 
         system = current_buddy_prompt()
+        # TTS有効時は短い返答を促す
+        if tts_enabled:
+            system = system + "\n\n【重要】音声読み上げモードです。返答は簡潔に、3〜4文程度（150文字以内）でまとめてください。"
+        # キャラ連動プロンプトが有効なら性格情報を追加
+        if char_link_enabled and speaker_personality:
+            system = system + f"\n\n【キャラクター設定】\nあなたは以下の性格で返答してください: {speaker_personality}"
+        # 一人称・二人称が設定されていれば追加
+        if char_link_enabled and speaker_calls_profile:
+            first_p = speaker_calls_profile.get("first_person")
+            second_p = speaker_calls_profile.get("second_person")
+            if first_p or second_p:
+                pronoun_text = "【話し方の設定】\n"
+                if first_p:
+                    pronoun_text += f"- 自分のことは「{first_p}」と呼んでください\n"
+                if second_p:
+                    pronoun_text += f"- 相手（ユーザー）のことは「{second_p}」と呼んでください\n"
+                system = system + "\n\n" + pronoun_text.strip()
         history = st.session_state["chat_messages"][-12:]
         messages = [{"role": "system", "content": system}] + history
 

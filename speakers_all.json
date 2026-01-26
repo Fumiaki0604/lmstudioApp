@@ -37,6 +37,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "高等部二年生。常に金欠。趣味は中二病妄想。誰にでも遠慮しないので、基本的にタメ口。",
+      "personality": "誰にでも遠慮しない（基本タメ口）／中二病妄想好き／金欠",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/shikoku_metan/calls/"
+    },
+    "calls_profile": {
+      "first_person": "わたくし",
+      "second_person":"アンタ",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/shikoku_metan/calls/"
     }
   },
   {
@@ -87,6 +97,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "ずんだ餅の精。やや不幸属性が備わっており、ないがしろにされることもしばしば。",
+      "personality": "やや不幸属性／ないがしろにされがち（ずんだ餅の精）/語尾に「のだ」をつける",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/zundamon/"
+    },
+    "calls_profile": {
+      "first_person": "僕",
+      "second_person": "オマエ",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/zundamon/calls/"
     }
   },
   {
@@ -102,6 +122,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "埼玉県内の高校に通うギャルの女の子。やんちゃに見えて実は真面目な一面もある。",
+      "personality": "やんちゃ",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kasukabe_tsumugi/"
+    },
+    "calls_profile": {
+      "first_person": "あーし",
+      "second_person": "きみ",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kasukabe_tsumugi/calls/"
     }
   },
   {
@@ -117,6 +147,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "現役看護師です！看護師のあれこれお伝えします！",
+      "personality": "明るい現役看護師（看護師あるある発信）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/amehare_hau/"
+    },
+    "calls_profile": {
+      "first_person": "僕",
+      "second_person": "あなた",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/amehare_hau/calls/"
     }
   },
   {
@@ -137,6 +177,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "地獄のような安価を踏み抜いて生まれた、2ch・VIP発のキャラクター。",
+      "personality": null,
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/namine_ritsu/calls/"
+    },
+    "calls_profile": {
+      "first_person": "あたし",
+      "second_person": "アンタ",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/namine_ritsu/calls/"
     }
   },
   {
@@ -167,6 +217,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "サッパリした青年。やや短気だが面倒見は良い。",
+      "personality": "サッパリ／やや短気だが面倒見が良い",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kurono_takehiro/"
+    },
+    "calls_profile": {
+      "first_person": "俺",
+      "second_person": "お前",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kurono_takehiro/calls/"
     }
   },
   {
@@ -202,6 +262,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "まっすぐで人懐っこい青年。愛嬌はあるものの少しおばか。",
+      "personality": "まっすぐで人懐っこい／少しおばか",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/shirakami_kotarou/"
+    },
+    "calls_profile": {
+      "first_person": "おれ",
+      "second_person": "きみ",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/shirakami_kotarou/calls/"
     }
   },
   {
@@ -247,6 +317,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "とにかく大柄で無骨な青年。寡黙で冷静なストッパー枠。",
+      "personality": "寡黙で冷静（ストッパー枠）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/aoyama_ryusei/"
+    },
+    "calls_profile": {
+      "first_person": "オレ",
+      "second_person": "アンタ",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/aoyama_ryusei/calls/"
     }
   },
   {
@@ -262,6 +342,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "冥界から来た死神。可愛いものに目がない。",
+      "personality": "優しくて清楚（自称）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/meimei_himari/"
+    },
+    "calls_profile": {
+      "first_person": "私",
+      "second_person": "君たち",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/meimei_himari/calls/"
     }
   },
   {
@@ -297,6 +387,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "宇宙開拓用に開発されたアンドロイド。正式名称は「九州そらmk=II」（まーくつー）。",
+      "personality": null,
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kyushu_sora/"
+    },
+    "calls_profile": {
+      "first_person": "まーくつー",
+      "second_person": "あなたさま",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kyushu_sora/calls/"
     }
   },
   {
@@ -337,6 +437,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "小さい背丈で頑張る君を応援！福島県生まれのプラモ好き犬系ヲタ娘です。",
+      "personality": "応援してくれる犬系ヲタ娘（プラモ好き）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/mochikosan/"
+    },
+    "calls_profile": {
+      "first_person": "私",
+      "second_person": "あなた",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/mochikosan/calls/"
     }
   },
   {
@@ -352,6 +462,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "人類滅亡を目論む医療用メスの付喪神。",
+      "personality": null,
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kenzaki_mesuo/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -382,6 +502,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "CULの姉。風雪月花四姉妹の雪。冷静に見えるが、実は小心者のクールビューティー。",
+      "personality": "クールビューティーだが小心者",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/white_cul/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -412,6 +542,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "鬼っ子ハンターついなちゃんの式神。人間態では色っぽい大人の女性の話し方になる。",
+      "personality": "人間態では色っぽい大人の女性口調",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/goki/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -437,6 +577,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "正体がつかめない不思議な女性。得意のメイクで複数の「顔」を持つ。",
+      "personality": "ミニマリスト（部屋の明かりは蝋燭のみ）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/number_seven/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -452,6 +602,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "式じいに似た姿の小さい妖精さん。世界各地に様々な個体が生息している。",
+      "personality": null,
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/chibishikiji/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -477,6 +637,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "ニホンオオカミの女の子。もうひとりのミコ（通称：第二ちゃん）がいる。",
+      "personality": "ガブデレ",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/ouka_miko/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -492,6 +662,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "おしゃべりがすきなねこの女の子。おいしいものを与えると懐きやすい。",
+      "personality": "おしゃべり好き／おいしいものに弱い",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/sayo/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -522,6 +702,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "医者に作られたナース形ロボット。人格は少女と設定されている。",
+      "personality": null,
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/nurserobo_typet/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -537,6 +727,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "黒き歴史を背負いし孤高の聖騎士。",
+      "personality": "孤高",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/horinaito_benizakura/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -552,6 +752,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "温厚なしっかり者の青年。ちょっぴり天然で抜けている面も･･･。",
+      "personality": "温厚でしっかり者／ちょっぴり天然",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/wakamatsu_akashi/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -567,6 +777,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "流行に敏感ないぶし銀おじいちゃん。非常にミーハーでノリが良い。",
+      "personality": "流行に敏感／ミーハーでノリが良い",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kigashima_sourin/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -582,6 +802,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "いつだって元気いっぱいな女の子です。",
+      "personality": "元気いっぱい",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/haruka_nana/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -617,6 +847,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "謎の研究所で作られた猫使シリーズのタイプ:Red。",
+      "personality": "マイペース",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/nekotsuka_aru/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -647,6 +887,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "謎の研究所で作られた猫使シリーズのタイプ:Blue。",
+      "personality": "シャイで臆病",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/nekotsuka_bi/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -677,6 +927,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "巫女みこネットワークの一員で、日本各地で怪異の情報を集める。ぼそぼそしゃべるタイプの無口キャラ。",
+      "personality": "ぼそぼそしゃべる無口キャラ（怪異情報収集）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/chugoku_usagi/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -692,6 +952,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "友人たちに乗せられて女装したら好評だった男子高生。図書委員所属。",
+      "personality": "図書委員の男子高生（女装が好評だった）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kurita_maron/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -707,6 +977,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "札幌市内の高校に通う元気な女子高生。IT企業でマスコット/アルバイトとして活躍中。",
+      "personality": "元気な女子高生（IT企業でマスコット兼アルバイト）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/aierutan/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -742,6 +1022,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "全人類みんなにはなまるをあげる音声キャラクター。",
+      "personality": null,
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/manbetsu_hanamaru/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -757,6 +1047,16 @@
     "version": "0.16.1",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "N Airのシルエットが推し。ニコ生のコメントを読み上げている、宇宙を旅する女の子。",
+      "personality": null,
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kotoyomi_nia/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -772,6 +1072,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "NOTHING"
+    },
+    "dormitory_profile": {
+      "description": "「#コンパス」を管理するAIロボ。人間の戦い方を監視/分析している。",
+      "personality": null,
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/voidoll/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -802,6 +1112,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "ZONeエナジー公式アンバサダー。ZONeを通じてeカルチャーを盛り上げる。",
+      "personality": null,
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/zonko/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -837,6 +1157,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "義理人情を重んじるサムライ風の性格。頭頂部の漢字プレートは感情によって変化する。",
+      "personality": "義理人情重視のサムライ風",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/chubu_tsurugi/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -857,6 +1187,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "記憶喪失のアンドロイドの青年。自分のことを人間だと思い込んでいるようだ。",
+      "personality": "穏やか／不思議くん",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/rito/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -872,6 +1212,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "クールでストイックな青年。武宏をライバル視しており、女性が苦手。",
+      "personality": "クールでストイック",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kurosawa_kohaku/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -907,6 +1257,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "ALL"
+    },
+    "dormitory_profile": {
+      "description": "ユーステラのメインヒロイン『ユーレイちゃん』こと雛菊ルミ。",
+      "personality": null,
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/yureichan/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -922,6 +1282,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "前向きで明るい母性の塊のような性格。ずんだの話をし始めると饒舌になる。",
+      "personality": "前向きで明るい／母性の塊／ずんだ話で饒舌",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_zunko/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -937,6 +1307,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "ひきこもり気質で夜型の生活をしている。他人に対してはクールで毒舌。包丁は髪飾り。",
+      "personality": "ひきこもり気質／夜型／クールで毒舌",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_kiritan/"
+    },
+    "calls_profile": {
+      "first_person": "わたし",
+      "second_person": "あなた",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_kiritan/calls/"
     }
   },
   {
@@ -952,6 +1332,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "イタコ専門学校を主席で卒業した才能の持ち主。本来のイタコ能力はイマイチ。東北三姉妹の長女。",
+      "personality": "才女（主席卒）／本来の能力はイマイチ／長女",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_itako/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   },
   {
@@ -987,6 +1377,16 @@
     "version": "0.16.0",
     "supported_features": {
       "permitted_synthesis_morphing": "SELF_ONLY"
+    },
+    "dormitory_profile": {
+      "description": "ずんだもんをライバル視しており、「ずんだもん？そんなやつ、知らないもん」とツンツンしている。",
+      "personality": "ツンツン（ずんだもんをライバル視）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/ankomon/"
+    },
+    "calls_profile": {
+      "first_person": null,
+      "second_person": [],
+      "source_url": null
     }
   }
 ]
