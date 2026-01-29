@@ -36,8 +36,10 @@ SUMMARY_ADDON = """追加ルール（URL要約）:
 STORE_DIR = Path.home() / ".lmstudio_assistant"
 PROMPTS_FILE = STORE_DIR / "prompts.json"
 SETTINGS_FILE = STORE_DIR / "settings.json"
+CHAT_SESSIONS_DIR = STORE_DIR / "chat_sessions"
 SPEAKERS_FILE = Path(__file__).parent / "speakers_all.json"
 TTS_QUEST_API = "https://api.tts.quest/v3/voicevox/synthesis"
+LOCAL_VOICEVOX_URL = "http://localhost:50021"
 
 
 # =============================
@@ -82,7 +84,7 @@ def current_buddy_prompt() -> str:
 # Settings (API keys etc.)
 # =============================
 def _default_settings():
-    return {"tts_api_key": ""}
+    return {"tts_api_key": "", "tts_mode": "cloud"}
 
 
 def load_settings() -> dict:
@@ -102,6 +104,101 @@ def save_settings(settings: dict) -> None:
 def get_tts_api_key() -> str:
     settings = st.session_state.get("app_settings", {})
     return settings.get("tts_api_key", "")
+
+
+def get_tts_mode() -> str:
+    """TTSモードを取得 ("local" or "cloud")"""
+    settings = st.session_state.get("app_settings", {})
+    return settings.get("tts_mode", "cloud")
+
+
+# =============================
+# Chat Sessions (複数会話管理)
+# =============================
+import uuid
+
+
+def get_session_path(session_id: str) -> Path:
+    """セッションファイルのパスを取得"""
+    return CHAT_SESSIONS_DIR / f"{session_id}.json"
+
+
+def list_chat_sessions() -> list:
+    """保存された会話セッション一覧を取得（新しい順）"""
+    CHAT_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    sessions = []
+    for f in CHAT_SESSIONS_DIR.glob("*.json"):
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            sessions.append({
+                "id": f.stem,
+                "title": data.get("title", "無題"),
+                "updated_at": data.get("updated_at", ""),
+                "message_count": len(data.get("messages", [])),
+            })
+        except Exception:
+            pass
+    # 更新日時で降順ソート
+    sessions.sort(key=lambda x: x["updated_at"], reverse=True)
+    return sessions
+
+
+def load_chat_session(session_id: str) -> dict:
+    """指定セッションを読み込む"""
+    path = get_session_path(session_id)
+    try:
+        if path.exists():
+            return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {"id": session_id, "title": "無題", "messages": [], "updated_at": ""}
+
+
+def save_chat_session(session_id: str, messages: list, title: Optional[str] = None) -> None:
+    """会話セッションを保存する"""
+    CHAT_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    path = get_session_path(session_id)
+
+    # 既存データを読み込み
+    existing = {}
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+
+    # タイトル自動生成（最初のユーザーメッセージから）
+    if title is None:
+        title = existing.get("title", "無題")
+        if title == "無題" and messages:
+            for msg in messages:
+                if msg.get("role") == "user":
+                    content = msg.get("content", "")[:20]
+                    title = content + ("..." if len(msg.get("content", "")) > 20 else "")
+                    break
+
+    data = {
+        "id": session_id,
+        "title": title,
+        "updated_at": datetime.now().isoformat(),
+        "messages": messages,
+    }
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def create_new_session() -> str:
+    """新しいセッションを作成してIDを返す"""
+    session_id = datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:6]
+    return session_id
+
+
+def delete_chat_session(session_id: str) -> bool:
+    """セッションを削除"""
+    path = get_session_path(session_id)
+    if path.exists():
+        path.unlink()
+        return True
+    return False
 
 
 # =============================
@@ -242,7 +339,7 @@ def synthesize_voice(text: str, speaker_id: int, api_key: str = "", timeout: int
 
 
 def synthesize_voice_full(text: str, speaker_id: int, api_key: str = "", timeout: int = 30, max_retries: int = 2) -> tuple:
-    """長文テキストを分割して音声合成し、連結したmp3データを返す"""
+    """長文テキストを分割して音声合成し、連結したmp3データを返す（TTS Quest API用）"""
     chunks = split_text_for_tts(text, max_len=200)
     if not chunks:
         return None, "No text to synthesize"
@@ -273,6 +370,130 @@ def synthesize_voice_full(text: str, speaker_id: int, api_key: str = "", timeout
 
     # MP3は単純に連結可能（フレーム単位なので）
     return b"".join(audio_parts), None
+
+
+# =============================
+# Local VOICEVOX (ローカルエンジン)
+# =============================
+def check_local_voicevox(timeout: int = 2) -> bool:
+    """ローカルVOICEVOXが起動しているか確認"""
+    try:
+        r = requests.get(f"{LOCAL_VOICEVOX_URL}/version", timeout=timeout)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+
+def synthesize_voice_local(text: str, speaker_id: int, timeout: int = 60) -> tuple:
+    """ローカルVOICEVOXで音声合成し、(wavデータ, エラーメッセージ)を返す"""
+    try:
+        # 1. audio_queryでクエリを生成
+        query_url = f"{LOCAL_VOICEVOX_URL}/audio_query"
+        query_r = requests.post(
+            query_url,
+            params={"text": text, "speaker": speaker_id},
+            timeout=timeout,
+        )
+        query_r.raise_for_status()
+        audio_query = query_r.json()
+
+        # 2. synthesisで音声合成
+        synth_url = f"{LOCAL_VOICEVOX_URL}/synthesis"
+        synth_r = requests.post(
+            synth_url,
+            params={"speaker": speaker_id},
+            json=audio_query,
+            timeout=timeout,
+        )
+        synth_r.raise_for_status()
+
+        # WAVデータを返す
+        return synth_r.content, None
+    except requests.exceptions.ConnectionError:
+        return None, "ローカルVOICEVOXに接続できません。VOICEVOXを起動してください。"
+    except Exception as e:
+        return None, f"Exception: {e}"
+
+
+def synthesize_voice_local_full(text: str, speaker_id: int, timeout: int = 60) -> tuple:
+    """ローカルVOICEVOXで長文を音声合成（分割なし、文字数制限なし）
+
+    ローカルVOICEVOXは高速なため、分割せずに一括処理可能。
+    Returns: (wavデータ, エラーメッセージ)
+    """
+    if not text.strip():
+        return None, "No text to synthesize"
+
+    # ローカルは高速なので分割不要、ただし極端に長い場合は分割
+    max_len = 1000  # ローカルなら長めでOK
+    if len(text) <= max_len:
+        return synthesize_voice_local(text, speaker_id, timeout)
+
+    # 長文の場合は分割して連結
+    chunks = split_text_for_tts(text, max_len=max_len)
+    audio_parts = []
+    for i, chunk in enumerate(chunks):
+        audio_data, error = synthesize_voice_local(chunk, speaker_id, timeout)
+        if not audio_data:
+            return None, f"Chunk {i+1}/{len(chunks)} failed: {error}"
+        audio_parts.append(audio_data)
+
+    if not audio_parts:
+        return None, "No audio generated"
+
+    # WAVの連結（ヘッダーを考慮）
+    return concat_wav_data(audio_parts), None
+
+
+def concat_wav_data(wav_parts: list) -> bytes:
+    """複数のWAVデータを連結する"""
+    if len(wav_parts) == 1:
+        return wav_parts[0]
+
+    # WAVヘッダーは44バイト（標準的なPCM WAV）
+    # 最初のファイルのヘッダーを使い、データ部分を連結
+    import struct
+
+    combined_data = b""
+    sample_rate = 0
+    num_channels = 0
+    bits_per_sample = 0
+
+    for i, wav in enumerate(wav_parts):
+        if len(wav) < 44:
+            continue
+        if i == 0:
+            # 最初のWAVからヘッダー情報を取得
+            num_channels = struct.unpack('<H', wav[22:24])[0]
+            sample_rate = struct.unpack('<I', wav[24:28])[0]
+            bits_per_sample = struct.unpack('<H', wav[34:36])[0]
+        # データ部分（44バイト以降）を追加
+        combined_data += wav[44:]
+
+    # 新しいWAVヘッダーを作成
+    data_size = len(combined_data)
+    file_size = data_size + 36
+    byte_rate = sample_rate * num_channels * bits_per_sample // 8
+    block_align = num_channels * bits_per_sample // 8
+
+    header = struct.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF',
+        file_size,
+        b'WAVE',
+        b'fmt ',
+        16,  # fmt chunk size
+        1,   # PCM format
+        num_channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+        b'data',
+        data_size,
+    )
+
+    return header + combined_data
 
 
 # =============================
@@ -381,6 +602,39 @@ def normalize_model_output(text: str) -> str:
     )
 
 
+def export_chat_to_markdown(messages: list) -> str:
+    """会話履歴をMarkdown形式でエクスポート"""
+    lines = ["# 会話履歴", ""]
+    lines.append(f"エクスポート日時: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    for msg in messages:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        if role == "user":
+            lines.append("## 👤 ユーザー")
+        else:
+            lines.append("## 🤖 アシスタント")
+        lines.append("")
+        lines.append(content)
+        lines.append("")
+        lines.append("---")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def export_chat_to_json(messages: list) -> str:
+    """会話履歴をJSON形式でエクスポート"""
+    export_data = {
+        "exported_at": datetime.now().isoformat(),
+        "messages": messages,
+    }
+    return json.dumps(export_data, ensure_ascii=False, indent=2)
+
+
 # =============================
 # Streamlit UI
 # =============================
@@ -388,8 +642,18 @@ st.set_page_config(page_title="相棒LLM（ローカル）", layout="centered")
 st.title("相棒LLM（ローカル / LM Studio）")
 
 # ---- session state ----
+if "current_session_id" not in st.session_state:
+    # 最新のセッションを読み込むか、新規作成
+    sessions = list_chat_sessions()
+    if sessions:
+        st.session_state["current_session_id"] = sessions[0]["id"]
+    else:
+        st.session_state["current_session_id"] = create_new_session()
+
 if "chat_messages" not in st.session_state:
-    st.session_state["chat_messages"] = []
+    session_data = load_chat_session(st.session_state["current_session_id"])
+    st.session_state["chat_messages"] = session_data.get("messages", [])
+
 if "url" not in st.session_state:
     st.session_state["url"] = ""
 if "last_user_prompt" not in st.session_state:
@@ -401,6 +665,57 @@ if "app_settings" not in st.session_state:
 
 # ---- sidebar ----
 with st.sidebar:
+    # 会話履歴セクション
+    st.header("💬 会話履歴")
+    if st.button("➕ 新しい会話", use_container_width=True):
+        new_id = create_new_session()
+        st.session_state["current_session_id"] = new_id
+        st.session_state["chat_messages"] = []
+        st.rerun()
+
+    # セッション一覧
+    sessions = list_chat_sessions()
+    current_id = st.session_state.get("current_session_id", "")
+
+    for sess in sessions[:15]:  # 最大15件表示
+        is_current = sess["id"] == current_id
+        title = sess["title"] or "無題"
+        # 日付表示
+        try:
+            dt = datetime.fromisoformat(sess["updated_at"])
+            date_str = dt.strftime("%m/%d %H:%M")
+        except Exception:
+            date_str = ""
+
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            btn_type = "primary" if is_current else "secondary"
+            if st.button(f"{'▶ ' if is_current else ''}{title}", key=f"sess_{sess['id']}", use_container_width=True, type=btn_type):
+                if not is_current:
+                    st.session_state["current_session_id"] = sess["id"]
+                    session_data = load_chat_session(sess["id"])
+                    st.session_state["chat_messages"] = session_data.get("messages", [])
+                    st.rerun()
+        with col2:
+            if st.button("🗑", key=f"del_{sess['id']}", help="削除"):
+                delete_chat_session(sess["id"])
+                if is_current:
+                    # 現在のセッションを削除した場合、新規作成
+                    remaining = list_chat_sessions()
+                    if remaining:
+                        st.session_state["current_session_id"] = remaining[0]["id"]
+                        session_data = load_chat_session(remaining[0]["id"])
+                        st.session_state["chat_messages"] = session_data.get("messages", [])
+                    else:
+                        new_id = create_new_session()
+                        st.session_state["current_session_id"] = new_id
+                        st.session_state["chat_messages"] = []
+                st.rerun()
+
+        if date_str:
+            st.caption(f"　　{date_str}")
+
+    st.divider()
     st.header("接続設定")
     base_url = st.text_input("LM Studio Base URL", "http://localhost:1234/v1")
     if st.button("🔄 接続を再確認"):
@@ -442,6 +757,24 @@ with st.sidebar:
     st.divider()
     st.header("🔊 音声読み上げ")
     tts_enabled = st.checkbox("返答を読み上げる", value=False)
+
+    # TTSモード選択（ローカル/クラウド）
+    tts_mode_options = {"cloud": "☁️ クラウド (TTS Quest)", "local": "💻 ローカル (VOICEVOX)"}
+    current_tts_mode = get_tts_mode()
+    tts_mode = st.radio(
+        "TTSエンジン",
+        options=list(tts_mode_options.keys()),
+        format_func=lambda x: tts_mode_options[x],
+        index=0 if current_tts_mode == "cloud" else 1,
+        horizontal=True,
+    )
+    # ローカルVOICEVOXの接続状態を表示
+    if tts_mode == "local":
+        if check_local_voicevox():
+            st.caption("✅ ローカルVOICEVOX接続中")
+        else:
+            st.caption("⚠️ ローカルVOICEVOX未起動（localhost:50021）")
+
     speaker_data = get_speaker_data()
     if speaker_data:
         char_names = list(speaker_data.keys())
@@ -520,13 +853,17 @@ with tab_chat:
 
     # 最後の音声があれば再生（非表示で自動再生）
     if "last_audio" in st.session_state and st.session_state["last_audio"]:
-        audio_b64 = base64.b64encode(st.session_state["last_audio"]).decode()
+        audio_data = st.session_state["last_audio"]
+        audio_format = st.session_state.get("last_audio_format", "mp3")
+        audio_b64 = base64.b64encode(audio_data).decode()
+        mime_type = "audio/wav" if audio_format == "wav" else "audio/mp3"
         st.markdown(
-            f'<audio autoplay style="display:none;"><source src="data:audio/mp3;base64,{audio_b64}" type="audio/mp3"></audio>',
+            f'<audio autoplay style="display:none;"><source src="data:{mime_type};base64,{audio_b64}" type="{mime_type}"></audio>',
             unsafe_allow_html=True,
         )
         # 再生後はクリア（連続再生防止）
         st.session_state["last_audio"] = None
+        st.session_state["last_audio_format"] = None
 
     # TTS エラーがあれば表示
     if "tts_error" in st.session_state and st.session_state["tts_error"]:
@@ -558,8 +895,8 @@ with tab_chat:
         st.session_state["chat_messages"].append({"role": "user", "content": user_prompt})
 
         system = current_buddy_prompt()
-        # TTS有効時は短い返答を促す
-        if tts_enabled:
+        # TTS有効時かつクラウドモードのみ短い返答を促す（ローカルは制限なし）
+        if tts_enabled and tts_mode == "cloud":
             system = system + "\n\n【重要】音声読み上げモードです。返答は簡潔に、3〜4文程度（150文字以内）でまとめてください。"
         # キャラ連動プロンプトが有効なら性格情報を追加
         if char_link_enabled and speaker_personality:
@@ -593,24 +930,58 @@ with tab_chat:
                 reply = f"ごめん、今ちょい失敗した。エラー: {e}"
 
         st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
+        save_chat_session(st.session_state["current_session_id"], st.session_state["chat_messages"])
 
         # 音声読み上げ
         if tts_enabled and reply:
             with st.spinner("🔊 音声生成中…"):
-                tts_key = get_tts_api_key()
-                audio_data, tts_error = synthesize_voice_full(reply, speaker_id, api_key=tts_key)
+                if tts_mode == "local":
+                    # ローカルVOICEVOX（WAV形式、文字数制限なし）
+                    audio_data, tts_error = synthesize_voice_local_full(reply, speaker_id)
+                    audio_format = "wav"
+                else:
+                    # クラウドTTS Quest API（MP3形式）
+                    tts_key = get_tts_api_key()
+                    audio_data, tts_error = synthesize_voice_full(reply, speaker_id, api_key=tts_key)
+                    audio_format = "mp3"
+
                 if audio_data:
                     st.session_state["last_audio"] = audio_data
+                    st.session_state["last_audio_format"] = audio_format
                 elif tts_error:
                     st.session_state["tts_error"] = tts_error
 
         # 送信後は再描画して最新ログを表示
         st.rerun()
 
-    if st.button("🧹 会話をリセット"):
-        st.session_state["chat_messages"] = []
-        st.session_state["last_user_prompt"] = ""
-        st.rerun()
+    # ボタン群（新規会話・エクスポート）
+    btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
+    with btn_col1:
+        if st.button("➕ 新しい会話"):
+            new_id = create_new_session()
+            st.session_state["current_session_id"] = new_id
+            st.session_state["chat_messages"] = []
+            st.session_state["last_user_prompt"] = ""
+            st.rerun()
+
+    # エクスポートボタン（会話がある場合のみ表示）
+    if st.session_state["chat_messages"]:
+        with btn_col2:
+            md_content = export_chat_to_markdown(st.session_state["chat_messages"])
+            st.download_button(
+                label="📄 Markdown",
+                data=md_content,
+                file_name=f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                mime="text/markdown",
+            )
+        with btn_col3:
+            json_content = export_chat_to_json(st.session_state["chat_messages"])
+            st.download_button(
+                label="📋 JSON",
+                data=json_content,
+                file_name=f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+            )
 
 # =============================
 # URL Summary tab
@@ -768,3 +1139,28 @@ with tab_settings:
         st.caption("✅ APIキー設定済み")
     else:
         st.caption("⚠️ APIキー未設定（制限付きで動作）")
+
+    st.divider()
+    st.subheader("🔊 TTS設定")
+
+    current_tts_mode_setting = app_settings.get("tts_mode", "cloud")
+    tts_mode_setting = st.radio(
+        "デフォルトTTSエンジン",
+        options=["cloud", "local"],
+        format_func=lambda x: "☁️ クラウド (TTS Quest API)" if x == "cloud" else "💻 ローカル (VOICEVOX)",
+        index=0 if current_tts_mode_setting == "cloud" else 1,
+        help="クラウド: TTS Quest API使用（文字数制限あり）\nローカル: VOICEVOXエンジン使用（制限なし、要インストール）"
+    )
+
+    if st.button("💾 TTS設定を保存"):
+        app_settings["tts_mode"] = tts_mode_setting
+        st.session_state["app_settings"] = app_settings
+        save_settings(app_settings)
+        st.success("TTS設定を保存しました。")
+
+    # ローカルVOICEVOX接続テスト
+    st.caption("**ローカルVOICEVOX接続状態:**")
+    if check_local_voicevox():
+        st.caption("✅ 接続OK (localhost:50021)")
+    else:
+        st.caption("⚠️ 未接続 - VOICEVOXを起動してください")
