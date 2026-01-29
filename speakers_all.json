@@ -45,7 +45,7 @@
     },
     "calls_profile": {
       "first_person": "わたくし",
-      "second_person":"アンタ",
+      "second_person": "アンタ",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/shikoku_metan/calls/"
     }
   },
@@ -644,8 +644,8 @@
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/ouka_miko/"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
+      "first_person": "ミコ",
+      "second_person": "あなた",
       "source_url": null
     }
   },
@@ -669,8 +669,8 @@
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/sayo/"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
+      "first_person": "小夜",
+      "second_person": "あなた",
       "source_url": null
     }
   },
@@ -1075,12 +1075,12 @@
     },
     "dormitory_profile": {
       "description": "「#コンパス」を管理するAIロボ。人間の戦い方を監視/分析している。",
-      "personality": null,
+      "personality": "人間の戦い方を監視/分析している。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/voidoll/"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
+      "first_person": "ワタシ",
+      "second_person": "あなた",
       "source_url": null
     }
   },

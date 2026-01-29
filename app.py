@@ -212,6 +212,41 @@ def load_speakers() -> list:
     return []
 
 
+def load_speakers_raw() -> list:
+    """speakers_all.json を直接読み込む（キャッシュなし、編集用）"""
+    if SPEAKERS_FILE.exists():
+        return json.loads(SPEAKERS_FILE.read_text(encoding="utf-8"))
+    return []
+
+
+def save_speakers(speakers: list) -> None:
+    """話者データを保存"""
+    SPEAKERS_FILE.write_text(json.dumps(speakers, ensure_ascii=False, indent=2), encoding="utf-8")
+    # キャッシュをクリア
+    load_speakers.clear()
+
+
+def update_speaker_profile(name: str, personality: str, first_person: str, second_person: str) -> bool:
+    """指定キャラクターのプロフィールを更新"""
+    speakers = load_speakers_raw()
+    for sp in speakers:
+        if sp.get("name") == name:
+            # dormitory_profile を更新
+            if "dormitory_profile" not in sp or sp["dormitory_profile"] is None:
+                sp["dormitory_profile"] = {}
+            sp["dormitory_profile"]["personality"] = personality if personality.strip() else None
+
+            # calls_profile を更新
+            if "calls_profile" not in sp or sp["calls_profile"] is None:
+                sp["calls_profile"] = {}
+            sp["calls_profile"]["first_person"] = first_person if first_person.strip() else None
+            sp["calls_profile"]["second_person"] = second_person if second_person.strip() else None
+
+            save_speakers(speakers)
+            return True
+    return False
+
+
 def get_speaker_data() -> dict:
     """話者データを構造化して返す
     Returns: {
@@ -748,13 +783,6 @@ with st.sidebar:
     temperature = st.slider("Temperature", 0.0, 1.5, 0.3, 0.1)
 
     st.divider()
-    st.header("相棒設定（表示のみ）")
-    store = st.session_state["prompt_store"]
-    active_name = store.get("active", "default")
-    st.caption(f"現在の相棒プロンプト: **{active_name}**")
-    st.caption("※編集は⚙️設定タブで行います。")
-
-    st.divider()
     st.header("🔊 音声読み上げ")
     tts_enabled = st.checkbox("返答を読み上げる", value=False)
 
@@ -792,15 +820,11 @@ with st.sidebar:
         speaker_personality = char_info["personality"]
         speaker_calls_profile = char_info["calls_profile"]
 
-        # キャラ連動プロンプト
-        char_link_enabled = st.checkbox("キャラ連動プロンプト", value=False,
-            help="ONにすると話者の性格に合わせた返答になります")
-        if char_link_enabled and speaker_personality:
+        # キャラクター性格表示
+        if speaker_personality:
             st.caption(f"🎭 {speaker_personality}")
-        elif char_link_enabled and not speaker_personality:
-            st.caption("⚠️ このキャラクターの性格情報はありません")
         # 一人称・二人称の表示
-        if char_link_enabled and speaker_calls_profile:
+        if speaker_calls_profile:
             fp = speaker_calls_profile.get("first_person") or "?"
             sp_person = speaker_calls_profile.get("second_person") or "?"
             st.caption(f"👤 一人称: {fp} / 二人称: {sp_person}")
@@ -810,7 +834,6 @@ with st.sidebar:
         speaker_id = 3  # fallback
         speaker_personality = None
         speaker_calls_profile = None
-        char_link_enabled = False
 
 if not lm_ok:
     st.stop()
@@ -898,11 +921,11 @@ with tab_chat:
         # TTS有効時かつクラウドモードのみ短い返答を促す（ローカルは制限なし）
         if tts_enabled and tts_mode == "cloud":
             system = system + "\n\n【重要】音声読み上げモードです。返答は簡潔に、3〜4文程度（150文字以内）でまとめてください。"
-        # キャラ連動プロンプトが有効なら性格情報を追加
-        if char_link_enabled and speaker_personality:
+        # キャラクター性格情報を追加
+        if speaker_personality:
             system = system + f"\n\n【キャラクター設定】\nあなたは以下の性格で返答してください: {speaker_personality}"
         # 一人称・二人称が設定されていれば追加
-        if char_link_enabled and speaker_calls_profile:
+        if speaker_calls_profile:
             first_p = speaker_calls_profile.get("first_person")
             second_p = speaker_calls_profile.get("second_person")
             if first_p or second_p:
@@ -1164,3 +1187,62 @@ with tab_settings:
         st.caption("✅ 接続OK (localhost:50021)")
     else:
         st.caption("⚠️ 未接続 - VOICEVOXを起動してください")
+
+    st.divider()
+    st.subheader("🎭 キャラクター設定")
+    st.caption("キャラ連動プロンプトで使用する性格・一人称・二人称を編集できます")
+
+    # キャラクター選択
+    edit_speaker_data = get_speaker_data()
+    if edit_speaker_data:
+        edit_char_names = list(edit_speaker_data.keys())
+        edit_selected_char = st.selectbox(
+            "編集するキャラクター",
+            edit_char_names,
+            key="edit_char_select"
+        )
+
+        edit_char_info = edit_speaker_data[edit_selected_char]
+        current_personality = edit_char_info.get("personality") or ""
+        current_calls = edit_char_info.get("calls_profile") or {}
+        current_first = current_calls.get("first_person") or ""
+        current_second = current_calls.get("second_person") or ""
+
+        # 編集フォーム（キーをキャラ名で動的に変更して値を反映）
+        edit_personality = st.text_area(
+            "性格・キャラクター説明",
+            value=current_personality,
+            height=100,
+            placeholder="例: 明るく元気な性格。語尾に「〜のだ」をつける。",
+            key=f"edit_personality_{edit_selected_char}"
+        )
+
+        col_fp, col_sp = st.columns(2)
+        with col_fp:
+            edit_first_person = st.text_input(
+                "一人称",
+                value=current_first,
+                placeholder="例: 僕、私、俺",
+                key=f"edit_first_person_{edit_selected_char}"
+            )
+        with col_sp:
+            edit_second_person = st.text_input(
+                "二人称（ユーザーの呼び方）",
+                value=current_second,
+                placeholder="例: あなた、君、お前",
+                key=f"edit_second_person_{edit_selected_char}"
+            )
+
+        if st.button("💾 キャラクター設定を保存", key="save_char_profile"):
+            if update_speaker_profile(
+                edit_selected_char,
+                edit_personality,
+                edit_first_person,
+                edit_second_person
+            ):
+                st.success(f"「{edit_selected_char}」の設定を保存しました")
+                st.rerun()
+            else:
+                st.error("保存に失敗しました")
+    else:
+        st.warning("speakers_all.json が見つかりません")
