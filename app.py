@@ -2,6 +2,7 @@ import json
 import time
 import base64
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Optional
 
@@ -532,6 +533,50 @@ def concat_wav_data(wav_parts: list) -> bytes:
 
 
 # =============================
+# Weather (wttr.in)
+# =============================
+@st.cache_data(ttl=1800)  # 30分キャッシュ
+def get_weather_meguro() -> Optional[dict]:
+    """目黒区の天気情報を取得"""
+    try:
+        r = requests.get(
+            "https://wttr.in/Meguro,Tokyo?format=j1",
+            timeout=5,
+            headers={"Accept-Language": "ja"}
+        )
+        if r.status_code == 200:
+            data = r.json()
+            current = data.get("current_condition", [{}])[0]
+            return {
+                "temp": current.get("temp_C", "?"),
+                "feel": current.get("FeelsLikeC", "?"),
+                "desc": current.get("lang_ja", [{}])[0].get("value", current.get("weatherDesc", [{}])[0].get("value", "不明")),
+                "humidity": current.get("humidity", "?"),
+            }
+    except Exception:
+        pass
+    return None
+
+
+def get_time_period(hour: int) -> str:
+    """時間帯を日本語で返す"""
+    if 5 <= hour < 10:
+        return "朝"
+    elif 10 <= hour < 12:
+        return "午前"
+    elif 12 <= hour < 14:
+        return "お昼"
+    elif 14 <= hour < 17:
+        return "午後"
+    elif 17 <= hour < 19:
+        return "夕方"
+    elif 19 <= hour < 22:
+        return "夜"
+    else:
+        return "深夜"
+
+
+# =============================
 # LM Studio helpers
 # =============================
 EMBEDDING_PREFIXES = ("text-embedding-", "embedding-", "nomic-embed-")
@@ -918,6 +963,17 @@ with tab_chat:
         st.session_state["chat_messages"].append({"role": "user", "content": user_prompt})
 
         system = current_buddy_prompt()
+        # 日時・時間帯・天気を追加（東京時間）
+        now = datetime.now(ZoneInfo("Asia/Tokyo"))
+        weekdays = ["月", "火", "水", "木", "金", "土", "日"]
+        today_str = now.strftime("%Y年%m月%d日") + f"（{weekdays[now.weekday()]}）"
+        time_str = now.strftime("%H:%M")
+        period = get_time_period(now.hour)
+        system = system + f"\n\n【現在の日時】{today_str} {time_str}（{period}）"
+        # 天気情報
+        weather = get_weather_meguro()
+        if weather:
+            system = system + f"\n【目黒区の天気】{weather['desc']}、気温{weather['temp']}℃（体感{weather['feel']}℃）、湿度{weather['humidity']}%"
         # TTS有効時かつクラウドモードのみ短い返答を促す（ローカルは制限なし）
         if tts_enabled and tts_mode == "cloud":
             system = system + "\n\n【重要】音声読み上げモードです。返答は簡潔に、3〜4文程度（150文字以内）でまとめてください。"
@@ -933,7 +989,7 @@ with tab_chat:
                 if first_p:
                     pronoun_text += f"- 自分のことは「{first_p}」と呼んでください\n"
                 if second_p:
-                    pronoun_text += f"- 相手（ユーザー）のことは「{second_p}」と呼んでください\n"
+                    pronoun_text += f"- 相手（ユーザー）のことは会話の流れで「{second_p}」と呼んでください（ただし挨拶や呼びかけには使わない。「こんにちは、{second_p}」はNG）\n"
                 system = system + "\n\n" + pronoun_text.strip()
         history = st.session_state["chat_messages"][-12:]
         messages = [{"role": "system", "content": system}] + history
