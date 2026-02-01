@@ -1,6 +1,9 @@
 import json
 import time
 import base64
+import struct
+import uuid
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -9,6 +12,8 @@ from typing import Optional
 import requests
 import trafilatura
 import streamlit as st
+import streamlit.components.v1 as components
+from streamlit_js_eval import streamlit_js_eval
 
 # =============================
 # Constants
@@ -84,8 +89,19 @@ def current_buddy_prompt() -> str:
 # =============================
 # Settings (API keys etc.)
 # =============================
+DEFAULT_RSS_FEEDS = {
+    "GIZMODO": "https://www.gizmodo.jp/index.xml",
+    "LIFEHACKER": "https://www.lifehacker.jp/feed/index.xml",
+    "Yahoo主要": "https://news.yahoo.co.jp/rss/topics/top-picks.xml",
+    "Yahoo経済": "https://news.yahoo.co.jp/rss/categories/business.xml",
+    "Bloomberg Markets": "https://feeds.bloomberg.com/markets/news.rss",
+    "Bloomberg Politics": "https://feeds.bloomberg.com/politics/news.rss",
+    "Bloomberg Tech": "https://feeds.bloomberg.com/technology/news.rss",
+}
+
+
 def _default_settings():
-    return {"tts_api_key": "", "tts_mode": "cloud"}
+    return {"tts_api_key": "", "tts_mode": "cloud", "rss_feeds": DEFAULT_RSS_FEEDS.copy()}
 
 
 def load_settings() -> dict:
@@ -114,92 +130,83 @@ def get_tts_mode() -> str:
 
 
 # =============================
-# Chat Sessions (複数会話管理)
+# Chat Sessions (複数会話管理) - 現在未使用、後で再実装予定
 # =============================
-import uuid
-
-
-def get_session_path(session_id: str) -> Path:
-    """セッションファイルのパスを取得"""
-    return CHAT_SESSIONS_DIR / f"{session_id}.json"
-
-
-def list_chat_sessions() -> list:
-    """保存された会話セッション一覧を取得（新しい順）"""
-    CHAT_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    sessions = []
-    for f in CHAT_SESSIONS_DIR.glob("*.json"):
-        try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            sessions.append({
-                "id": f.stem,
-                "title": data.get("title", "無題"),
-                "updated_at": data.get("updated_at", ""),
-                "message_count": len(data.get("messages", [])),
-            })
-        except Exception:
-            pass
-    # 更新日時で降順ソート
-    sessions.sort(key=lambda x: x["updated_at"], reverse=True)
-    return sessions
-
-
-def load_chat_session(session_id: str) -> dict:
-    """指定セッションを読み込む"""
-    path = get_session_path(session_id)
-    try:
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return {"id": session_id, "title": "無題", "messages": [], "updated_at": ""}
-
-
-def save_chat_session(session_id: str, messages: list, title: Optional[str] = None) -> None:
-    """会話セッションを保存する"""
-    CHAT_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
-    path = get_session_path(session_id)
-
-    # 既存データを読み込み
-    existing = {}
-    if path.exists():
-        try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-
-    # タイトル自動生成（最初のユーザーメッセージから）
-    if title is None:
-        title = existing.get("title", "無題")
-        if title == "無題" and messages:
-            for msg in messages:
-                if msg.get("role") == "user":
-                    content = msg.get("content", "")[:20]
-                    title = content + ("..." if len(msg.get("content", "")) > 20 else "")
-                    break
-
-    data = {
-        "id": session_id,
-        "title": title,
-        "updated_at": datetime.now().isoformat(),
-        "messages": messages,
-    }
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def create_new_session() -> str:
-    """新しいセッションを作成してIDを返す"""
-    session_id = datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:6]
-    return session_id
-
-
-def delete_chat_session(session_id: str) -> bool:
-    """セッションを削除"""
-    path = get_session_path(session_id)
-    if path.exists():
-        path.unlink()
-        return True
-    return False
+# def get_session_path(session_id: str) -> Path:
+#     """セッションファイルのパスを取得"""
+#     return CHAT_SESSIONS_DIR / f"{session_id}.json"
+#
+#
+# def list_chat_sessions() -> list:
+#     """保存された会話セッション一覧を取得（新しい順）"""
+#     CHAT_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+#     sessions = []
+#     for f in CHAT_SESSIONS_DIR.glob("*.json"):
+#         try:
+#             data = json.loads(f.read_text(encoding="utf-8"))
+#             sessions.append({
+#                 "id": f.stem,
+#                 "title": data.get("title", "無題"),
+#                 "updated_at": data.get("updated_at", ""),
+#                 "message_count": len(data.get("messages", [])),
+#             })
+#         except Exception:
+#             pass
+#     sessions.sort(key=lambda x: x["updated_at"], reverse=True)
+#     return sessions
+#
+#
+# def load_chat_session(session_id: str) -> dict:
+#     """指定セッションを読み込む"""
+#     path = get_session_path(session_id)
+#     try:
+#         if path.exists():
+#             return json.loads(path.read_text(encoding="utf-8"))
+#     except Exception:
+#         pass
+#     return {"id": session_id, "title": "無題", "messages": [], "updated_at": ""}
+#
+#
+# def save_chat_session(session_id: str, messages: list, title: Optional[str] = None) -> None:
+#     """会話セッションを保存する"""
+#     CHAT_SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+#     path = get_session_path(session_id)
+#     existing = {}
+#     if path.exists():
+#         try:
+#             existing = json.loads(path.read_text(encoding="utf-8"))
+#         except Exception:
+#             pass
+#     if title is None:
+#         title = existing.get("title", "無題")
+#         if title == "無題" and messages:
+#             for msg in messages:
+#                 if msg.get("role") == "user":
+#                     content = msg.get("content", "")[:20]
+#                     title = content + ("..." if len(msg.get("content", "")) > 20 else "")
+#                     break
+#     data = {
+#         "id": session_id,
+#         "title": title,
+#         "updated_at": datetime.now().isoformat(),
+#         "messages": messages,
+#     }
+#     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+#
+#
+# def create_new_session() -> str:
+#     """新しいセッションを作成してIDを返す"""
+#     session_id = datetime.now().strftime("%Y%m%d_%H%M%S_") + uuid.uuid4().hex[:6]
+#     return session_id
+#
+#
+# def delete_chat_session(session_id: str) -> bool:
+#     """セッションを削除"""
+#     path = get_session_path(session_id)
+#     if path.exists():
+#         path.unlink()
+#         return True
+#     return False
 
 
 # =============================
@@ -488,8 +495,6 @@ def concat_wav_data(wav_parts: list) -> bytes:
 
     # WAVヘッダーは44バイト（標準的なPCM WAV）
     # 最初のファイルのヘッダーを使い、データ部分を連結
-    import struct
-
     combined_data = b""
     sample_rate = 0
     num_channels = 0
@@ -574,6 +579,115 @@ def get_time_period(hour: int) -> str:
         return "夜"
     else:
         return "深夜"
+
+
+# =============================
+# News RSS
+# =============================
+@st.cache_data(ttl=43200)  # 12時間キャッシュ
+def fetch_rss_headlines(url: str, max_items: int = 5) -> list:
+    """RSSから見出しを取得"""
+    try:
+        r = requests.get(url, timeout=5)
+        if r.status_code != 200:
+            return []
+        root = ET.fromstring(r.content)
+        items = root.findall(".//item")[:max_items]
+        return [item.find("title").text for item in items if item.find("title") is not None]
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=43200)  # 12時間キャッシュ
+def fetch_rss_items_with_category(url: str, source_name: str = "", max_items: int = 20) -> list:
+    """RSSから見出し・カテゴリ・リンク・要約を取得
+
+    categoryタグがない場合はsource_nameをカテゴリとして使用
+    """
+    try:
+        r = requests.get(url, timeout=5)
+        if r.status_code != 200:
+            return []
+        root = ET.fromstring(r.content)
+        items = root.findall(".//item")[:max_items]
+        result = []
+        for item in items:
+            title_el = item.find("title")
+            cat_el = item.find("category")
+            link_el = item.find("link")
+            desc_el = item.find("description")
+            if title_el is not None:
+                title = title_el.text or ""
+                # カテゴリタグがなければソース名を使用
+                category = cat_el.text if cat_el is not None and cat_el.text else (source_name or "その他")
+                link = link_el.text if link_el is not None else ""
+                desc = (desc_el.text or "")[:300] if desc_el is not None else ""
+                result.append({"title": title, "category": category, "link": link, "description": desc})
+        return result
+    except Exception:
+        return []
+
+
+def get_rss_feeds() -> dict:
+    """設定からRSSフィードを取得"""
+    settings = st.session_state.get("app_settings", {})
+    return settings.get("rss_feeds", DEFAULT_RSS_FEEDS.copy())
+
+
+def normalize_category(cat: str, source_name: str) -> str:
+    """カテゴリを正規化（類似カテゴリをまとめる）"""
+    lower = cat.lower()
+    # Bloomberg系・NMS系・Markets系は金融にまとめる
+    if source_name.startswith("Bloomberg") or lower.startswith("nms") or "market" in lower:
+        return "金融"
+    return cat
+
+
+def get_all_news_by_category(max_per_source: int = 10) -> dict:
+    """全ソースからカテゴリ別にニュースを取得"""
+    feeds = get_rss_feeds()
+    by_category = {}
+    for source_name, url in feeds.items():
+        items = fetch_rss_items_with_category(url, source_name, max_per_source)
+        for item in items:
+            cat = normalize_category(item["category"], source_name)
+            if cat not in by_category:
+                by_category[cat] = []
+            by_category[cat].append({
+                "title": item["title"],
+                "source": source_name,
+                "link": item.get("link", ""),
+                "description": item.get("description", "")
+            })
+    return by_category
+
+
+def get_news_summary(max_per_source: int = 3) -> str:
+    """全ソースからニュース見出しを取得"""
+    feeds = get_rss_feeds()
+    lines = []
+    for name, url in feeds.items():
+        headlines = fetch_rss_headlines(url, max_per_source)
+        if headlines:
+            lines.append(f"【{name}】" + " / ".join(headlines))
+    return "\n".join(lines) if lines else ""
+
+
+def get_news_for_category(category: str, max_items: int = 5) -> str:
+    """特定カテゴリのニュース（見出し+要約）を取得"""
+    all_news = get_all_news_by_category(max_per_source=10)
+    items = all_news.get(category, [])[:max_items]
+    if not items:
+        return ""
+    lines = []
+    for item in items:
+        desc = item.get("description", "").strip()
+        link = item.get("link", "")
+        if desc:
+            lines.append(f"■ {item['title']}\n  {desc}\n  URL: {link}")
+        else:
+            lines.append(f"■ {item['title']}\n  URL: {link}")
+    return "\n\n".join(lines)
 
 
 # =============================
@@ -718,21 +832,20 @@ def export_chat_to_json(messages: list) -> str:
 # =============================
 # Streamlit UI
 # =============================
-st.set_page_config(page_title="相棒LLM（ローカル）", layout="centered")
-st.title("相棒LLM（ローカル / LM Studio）")
+st.set_page_config(layout="centered")
 
 # ---- session state ----
-if "current_session_id" not in st.session_state:
-    # 最新のセッションを読み込むか、新規作成
-    sessions = list_chat_sessions()
-    if sessions:
-        st.session_state["current_session_id"] = sessions[0]["id"]
-    else:
-        st.session_state["current_session_id"] = create_new_session()
-
-if "chat_messages" not in st.session_state:
-    session_data = load_chat_session(st.session_state["current_session_id"])
-    st.session_state["chat_messages"] = session_data.get("messages", [])
+# ファイル保存ベースの会話履歴（現在未使用）
+# if "current_session_id" not in st.session_state:
+#     sessions = list_chat_sessions()
+#     if sessions:
+#         st.session_state["current_session_id"] = sessions[0]["id"]
+#     else:
+#         st.session_state["current_session_id"] = create_new_session()
+#
+# if "chat_messages" not in st.session_state:
+#     session_data = load_chat_session(st.session_state["current_session_id"])
+#     st.session_state["chat_messages"] = session_data.get("messages", [])
 
 if "url" not in st.session_state:
     st.session_state["url"] = ""
@@ -743,121 +856,45 @@ if "prompt_store" not in st.session_state:
 if "app_settings" not in st.session_state:
     st.session_state["app_settings"] = load_settings()
 
+# ---- 接続チェック（サイドバー外で実行） ----
+if "base_url" not in st.session_state:
+    st.session_state["base_url"] = "http://localhost:1234/v1"
+base_url = st.session_state["base_url"]
+
+models, lm_ok, err = [], False, None
+t0 = time.time()
+try:
+    models = lmstudio_models(base_url)
+    lm_ok = True
+except Exception as e:
+    err = e
+elapsed = int((time.time() - t0) * 1000)
+checked_at = datetime.now().strftime("%H:%M:%S")
+
+# 生成設定のデフォルト値
+if "max_chars" not in st.session_state:
+    st.session_state["max_chars"] = 4000
+if "max_tokens" not in st.session_state:
+    st.session_state["max_tokens"] = 800
+if "temperature" not in st.session_state:
+    st.session_state["temperature"] = 0.3
+
+max_chars = st.session_state["max_chars"]
+max_tokens = st.session_state["max_tokens"]
+temperature = st.session_state["temperature"]
+
 # ---- sidebar ----
 with st.sidebar:
-    # 会話履歴セクション
-    st.header("💬 会話履歴")
-    if st.button("➕ 新しい会話", use_container_width=True):
-        new_id = create_new_session()
-        st.session_state["current_session_id"] = new_id
-        st.session_state["chat_messages"] = []
-        st.rerun()
-
-    # セッション一覧
-    sessions = list_chat_sessions()
-    current_id = st.session_state.get("current_session_id", "")
-
-    for sess in sessions[:15]:  # 最大15件表示
-        is_current = sess["id"] == current_id
-        title = sess["title"] or "無題"
-        # 日付表示
-        try:
-            dt = datetime.fromisoformat(sess["updated_at"])
-            date_str = dt.strftime("%m/%d %H:%M")
-        except Exception:
-            date_str = ""
-
-        col1, col2 = st.columns([5, 1])
-        with col1:
-            btn_type = "primary" if is_current else "secondary"
-            if st.button(f"{'▶ ' if is_current else ''}{title}", key=f"sess_{sess['id']}", use_container_width=True, type=btn_type):
-                if not is_current:
-                    st.session_state["current_session_id"] = sess["id"]
-                    session_data = load_chat_session(sess["id"])
-                    st.session_state["chat_messages"] = session_data.get("messages", [])
-                    st.rerun()
-        with col2:
-            if st.button("🗑", key=f"del_{sess['id']}", help="削除"):
-                delete_chat_session(sess["id"])
-                if is_current:
-                    # 現在のセッションを削除した場合、新規作成
-                    remaining = list_chat_sessions()
-                    if remaining:
-                        st.session_state["current_session_id"] = remaining[0]["id"]
-                        session_data = load_chat_session(remaining[0]["id"])
-                        st.session_state["chat_messages"] = session_data.get("messages", [])
-                    else:
-                        new_id = create_new_session()
-                        st.session_state["current_session_id"] = new_id
-                        st.session_state["chat_messages"] = []
-                st.rerun()
-
-        if date_str:
-            st.caption(f"　　{date_str}")
-
-    st.divider()
-    st.header("接続設定")
-    base_url = st.text_input("LM Studio Base URL", "http://localhost:1234/v1")
-    if st.button("🔄 接続を再確認"):
-        st.rerun()
-
-    models, lm_ok, err = [], False, None
-    t0 = time.time()
-    try:
-        models = lmstudio_models(base_url)
-        lm_ok = True
-    except Exception as e:
-        err = e
-    elapsed = int((time.time() - t0) * 1000)
-    checked_at = datetime.now().strftime("%H:%M:%S")
-
-    if lm_ok:
-        st.success(f"🟢 接続中（{checked_at} / {elapsed}ms）")
-    else:
-        st.error("🔴 未接続")
-        st.caption(err)
-
-    st.divider()
-    st.header("生成設定")
-    max_chars = st.slider("入力文字数（要約）", 2000, 12000, 4000, 500)
-    st.caption(label_max_chars(max_chars))
-
-    max_tokens = st.slider("出力トークン", 200, 2000, 800, 50)
-    st.caption(label_max_tokens(max_tokens))
-
-    temperature = st.slider("Temperature", 0.0, 1.5, 0.3, 0.1)
-
-    st.divider()
-    st.header("🔊 音声読み上げ")
-    tts_enabled = st.checkbox("返答を読み上げる", value=False)
-
-    # TTSモード選択（ローカル/クラウド）
-    tts_mode_options = {"cloud": "☁️ クラウド (TTS Quest)", "local": "💻 ローカル (VOICEVOX)"}
-    current_tts_mode = get_tts_mode()
-    tts_mode = st.radio(
-        "TTSエンジン",
-        options=list(tts_mode_options.keys()),
-        format_func=lambda x: tts_mode_options[x],
-        index=0 if current_tts_mode == "cloud" else 1,
-        horizontal=True,
-    )
-    # ローカルVOICEVOXの接続状態を表示
-    if tts_mode == "local":
-        if check_local_voicevox():
-            st.caption("✅ ローカルVOICEVOX接続中")
-        else:
-            st.caption("⚠️ ローカルVOICEVOX未起動（localhost:50021）")
-
+    # ① キャラクター選択
+    st.header("🎭 キャラクター")
     speaker_data = get_speaker_data()
     if speaker_data:
         char_names = list(speaker_data.keys())
-        # デフォルトは「ずんだもん」
         default_char_idx = next((i for i, n in enumerate(char_names) if "ずんだもん" in n), 0)
-        selected_char = st.selectbox("キャラクター", char_names, index=default_char_idx)
+        selected_char = st.selectbox("キャラクター", char_names, index=default_char_idx, label_visibility="collapsed")
 
         char_info = speaker_data[selected_char]
         style_names = list(char_info["styles"].keys())
-        # デフォルトは「ノーマル」
         default_style_idx = next((i for i, s in enumerate(style_names) if s == "ノーマル"), 0)
         selected_style = st.selectbox("スタイル", style_names, index=default_style_idx)
 
@@ -865,22 +902,87 @@ with st.sidebar:
         speaker_personality = char_info["personality"]
         speaker_calls_profile = char_info["calls_profile"]
 
-        # キャラクター性格表示
         if speaker_personality:
             st.caption(f"🎭 {speaker_personality}")
-        # 一人称・二人称の表示
         if speaker_calls_profile:
             fp = speaker_calls_profile.get("first_person") or "?"
             sp_person = speaker_calls_profile.get("second_person") or "?"
             st.caption(f"👤 一人称: {fp} / 二人称: {sp_person}")
     else:
         st.warning("speakers_all.json が見つかりません")
-        tts_enabled = False
-        speaker_id = 3  # fallback
+        speaker_id = 3
         speaker_personality = None
         speaker_calls_profile = None
 
+    st.divider()
+
+    # ② 音声読み上げ
+    st.header("🔊 音声読み上げ")
+    tts_enabled = st.checkbox("返答を読み上げる", value=False)
+
+    if tts_enabled:
+        tts_mode_options = {"cloud": "☁️ クラウド", "local": "💻 ローカル"}
+        current_tts_mode = get_tts_mode()
+        tts_mode = st.radio(
+            "TTSエンジン",
+            options=list(tts_mode_options.keys()),
+            format_func=lambda x: tts_mode_options[x],
+            index=0 if current_tts_mode == "cloud" else 1,
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+        if tts_mode == "local":
+            if check_local_voicevox():
+                st.caption("✅ VOICEVOX接続中")
+            else:
+                st.caption("⚠️ VOICEVOX未起動")
+    else:
+        tts_mode = get_tts_mode()
+
+    # st.divider()
+    # # ③ 会話履歴（ファイル保存ベース - 現在未使用）
+    # st.header("💬 会話履歴")
+    # sessions = list_chat_sessions()
+    # current_id = st.session_state.get("current_session_id", "")
+    #
+    # for sess in sessions[:10]:
+    #     is_current = sess["id"] == current_id
+    #     title = sess["title"] or "無題"
+    #     try:
+    #         dt = datetime.fromisoformat(sess["updated_at"])
+    #         date_str = dt.strftime("%m/%d %H:%M")
+    #     except Exception:
+    #         date_str = ""
+    #
+    #     col1, col2 = st.columns([5, 1])
+    #     with col1:
+    #         btn_type = "primary" if is_current else "secondary"
+    #         if st.button(f"{'▶ ' if is_current else ''}{title}", key=f"sess_{sess['id']}", use_container_width=True, type=btn_type):
+    #             if not is_current:
+    #                 st.session_state["current_session_id"] = sess["id"]
+    #                 session_data = load_chat_session(sess["id"])
+    #                 st.session_state["chat_messages"] = session_data.get("messages", [])
+    #                 st.rerun()
+    #     with col2:
+    #         if st.button("🗑", key=f"del_{sess['id']}", help="削除"):
+    #             delete_chat_session(sess["id"])
+    #             if is_current:
+    #                 remaining = list_chat_sessions()
+    #                 if remaining:
+    #                     st.session_state["current_session_id"] = remaining[0]["id"]
+    #                     session_data = load_chat_session(remaining[0]["id"])
+    #                     st.session_state["chat_messages"] = session_data.get("messages", [])
+    #                 else:
+    #                     new_id = create_new_session()
+    #                     st.session_state["current_session_id"] = new_id
+    #                     st.session_state["chat_messages"] = []
+    #             st.rerun()
+    #
+    #     if date_str:
+    #         st.caption(f"　　{date_str}")
+
 if not lm_ok:
+    st.error("🔴 LM Studio未接続 - 設定タブで接続先を確認してください")
     st.stop()
 
 model = st.selectbox("使用モデル", models)
@@ -891,7 +993,101 @@ tab_chat, tab_summary, tab_settings = st.tabs(["💬 Chat（相棒）", "📄 UR
 # Chat tab (LINE風：入力欄1つ + 下固定)
 # =============================
 with tab_chat:
-    st.caption("雑談・相談・思考整理。普通に話しかけてOK。")
+    # 接続状態表示
+    conn_col1, conn_col2 = st.columns([5, 2])
+    with conn_col2:
+        st.caption(f"🟢 接続中 {checked_at}" if lm_ok else "🔴 未接続")
+
+    # カテゴリ取得
+    all_news = get_all_news_by_category(max_per_source=10)
+    categories = ["フリー"] + sorted(all_news.keys())
+
+    # カテゴリ選択
+    if "chat_category" not in st.session_state:
+        st.session_state["chat_category"] = "フリー"
+    if "category_chat_messages" not in st.session_state:
+        st.session_state["category_chat_messages"] = {}
+
+    selected_category = st.selectbox(
+        "話題カテゴリ",
+        categories,
+        index=categories.index(st.session_state["chat_category"]) if st.session_state["chat_category"] in categories else 0,
+        key="category_select"
+    )
+    st.session_state["chat_category"] = selected_category
+
+    # カテゴリ別チャット履歴の初期化
+    if selected_category not in st.session_state["category_chat_messages"]:
+        st.session_state["category_chat_messages"][selected_category] = []
+    if "news_fingerprint" not in st.session_state:
+        st.session_state["news_fingerprint"] = {}
+
+    # 現在のカテゴリのチャット履歴を取得
+    current_chat = st.session_state["category_chat_messages"][selected_category]
+
+    # カテゴリ別ニュース表示
+    if selected_category != "フリー":
+        cat_news = all_news.get(selected_category, [])
+        if cat_news:
+            with st.expander(f"📰 {selected_category}の最新ニュース ({len(cat_news)}件)", expanded=False):
+                for item in cat_news:
+                    link = item.get("link", "")
+                    if link:
+                        st.markdown(f"• [{item['title']}]({link}) ({item['source']})")
+
+        # ニュースのフィンガープリント（最初の3件のタイトル）
+        news_fingerprint = "|".join([item["title"] for item in cat_news[:3]])
+        old_fingerprint = st.session_state["news_fingerprint"].get(selected_category, "")
+        fingerprint_changed = news_fingerprint != old_fingerprint and old_fingerprint != ""
+
+        # 初回 or キャッシュ更新で新記事が来たらAIがニュース紹介
+        should_introduce = (not current_chat) or fingerprint_changed
+        if should_introduce and cat_news:
+            news_count = min(len(cat_news), 3)
+            news_text = get_news_for_category(selected_category, max_items=news_count)
+            char_personality = speaker_personality or ""
+            first_p = ""
+            second_p = ""
+            if speaker_calls_profile:
+                first_p = speaker_calls_profile.get("first_person") or ""
+                second_p = speaker_calls_profile.get("second_person") or ""
+
+            intro_prefix = "新しいニュースが入ってきたよ！\n\n" if fingerprint_changed else ""
+            intro_prompt = f"""{intro_prefix}友達に話題をふるように、以下の最新ニュース{news_count}つを紹介して。
+
+【ニュース】
+{news_text}
+
+【必須ルール】
+- 箇条書きは絶対に使わない
+- 各ニュースを紹介した後、必ず参照元URLを「詳しくはこちら→ URL」の形で記載
+- 各ニュースに対してキャラクターとしての感想を述べる
+- 全体的なトレンドのまとめは不要
+
+【キャラクター設定（これに従って話して）】
+{f'性格: {char_personality}' if char_personality else '性格: フレンドリーで親しみやすい'}
+{f'一人称: {first_p}' if first_p else ''}
+{f'相手の呼び方: {second_p}（ただし呼びかけには使わない）' if second_p else ''}"""
+            with st.spinner(f"📰 {selected_category}の最新ニュースを確認中…"):
+                try:
+                    intro_reply = call_lmstudio_chat_messages(
+                        base_url=base_url,
+                        model=model,
+                        messages=[{"role": "user", "content": intro_prompt}],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        timeout=180,
+                    )
+                    intro_reply = normalize_model_output(intro_reply)
+                    current_chat.append({"role": "assistant", "content": intro_reply})
+                    st.session_state["news_fingerprint"][selected_category] = news_fingerprint
+                except Exception:
+                    pass
+            st.rerun()
+
+        st.caption(f"💡 {selected_category}に関する話題でチャットします")
+    else:
+        st.caption("雑談・相談・思考整理。普通に話しかけてOK。")
 
     st.markdown(
         """
@@ -914,8 +1110,8 @@ with tab_chat:
         unsafe_allow_html=True,
     )
 
-    # 会話ログ
-    for msg in st.session_state["chat_messages"]:
+    # 会話ログ（カテゴリ別）
+    for msg in current_chat:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
@@ -941,26 +1137,71 @@ with tab_chat:
     # 入力バーに被らないためのスペーサー
     st.markdown('<div class="spacer"></div>', unsafe_allow_html=True)
 
-    # 下固定入力バー（1つ）
+    # 音声入力の結果をチェック（localStorageから取得）
+    if "stt_text" not in st.session_state:
+        st.session_state["stt_text"] = ""
+    stt_result = streamlit_js_eval(js_expressions="localStorage.getItem('stt_result') || ''", key="stt_check")
+    if stt_result and stt_result.strip():
+        st.session_state["stt_text"] = stt_result.strip()
+        # localStorageをクリア
+        streamlit_js_eval(js_expressions="localStorage.removeItem('stt_result')", key="stt_clear")
+
+    # 下固定入力バー
     st.markdown('<div class="dock">', unsafe_allow_html=True)
     with st.form("dock_form", clear_on_submit=True):
-        col1, col2 = st.columns([8, 1])
+        col1, col2, col3 = st.columns([7, 1, 1])
         with col1:
+            default_text = st.session_state.get("stt_text", "")
             user_prompt = st.text_input(
                 "message",
+                value=default_text,
                 placeholder="相棒に話しかける…",
                 label_visibility="collapsed",
             )
         with col2:
+            mic_clicked = st.form_submit_button("🎤")
+        with col3:
             submitted = st.form_submit_button("▶︎")
+
+    # マイクボタン押下時の処理
+    if mic_clicked:
+        components.html("""
+        <script>
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognition = new SpeechRecognition();
+            recognition.lang = 'ja-JP';
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                localStorage.setItem('stt_result', transcript);
+                window.parent.location.reload();
+            };
+            recognition.onerror = function(event) {
+                alert('音声認識エラー: ' + event.error);
+            };
+            recognition.start();
+        } else {
+            alert('このブラウザは音声入力に対応していません');
+        }
+        </script>
+        <p style="color:#888;font-size:12px;">🔴 録音中... 話しかけてください</p>
+        """, height=30)
+        st.stop()
+
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # 音声入力使用後はクリア
+    if st.session_state.get("stt_text"):
+        st.session_state["stt_text"] = ""
 
     if submitted and user_prompt.strip():
         user_prompt = user_prompt.strip()
         st.session_state["last_user_prompt"] = user_prompt
 
-        # ユーザー発話を履歴へ
-        st.session_state["chat_messages"].append({"role": "user", "content": user_prompt})
+        # ユーザー発話を履歴へ（カテゴリ別）
+        current_chat.append({"role": "user", "content": user_prompt})
 
         system = current_buddy_prompt()
         # 日時・時間帯・天気を追加（東京時間）
@@ -974,6 +1215,17 @@ with tab_chat:
         weather = get_weather_meguro()
         if weather:
             system = system + f"\n【目黒区の天気】{weather['desc']}、気温{weather['temp']}℃（体感{weather['feel']}℃）、湿度{weather['humidity']}%"
+        # ニュース見出し（カテゴリに応じて）
+        current_cat = st.session_state.get("chat_category", "フリー")
+        if current_cat == "フリー":
+            news = get_news_summary(max_per_source=3)
+            if news:
+                system = system + f"\n\n【最新ニュース】\n{news}"
+        else:
+            cat_news = get_news_for_category(current_cat)
+            if cat_news:
+                system = system + f"\n\n【{current_cat}の最新ニュース】\n{cat_news}"
+                system = system + f"\n\n【会話の焦点】ユーザーは「{current_cat}」に関する話題に興味があります。この分野のニュースについて詳しく解説・議論してください。"
         # TTS有効時かつクラウドモードのみ短い返答を促す（ローカルは制限なし）
         if tts_enabled and tts_mode == "cloud":
             system = system + "\n\n【重要】音声読み上げモードです。返答は簡潔に、3〜4文程度（150文字以内）でまとめてください。"
@@ -991,7 +1243,7 @@ with tab_chat:
                 if second_p:
                     pronoun_text += f"- 相手（ユーザー）のことは会話の流れで「{second_p}」と呼んでください（ただし挨拶や呼びかけには使わない。「こんにちは、{second_p}」はNG）\n"
                 system = system + "\n\n" + pronoun_text.strip()
-        history = st.session_state["chat_messages"][-12:]
+        history = current_chat[-12:]
         messages = [{"role": "system", "content": system}] + history
 
         with st.spinner("考え中…"):
@@ -1008,8 +1260,7 @@ with tab_chat:
             except Exception as e:
                 reply = f"ごめん、今ちょい失敗した。エラー: {e}"
 
-        st.session_state["chat_messages"].append({"role": "assistant", "content": reply})
-        save_chat_session(st.session_state["current_session_id"], st.session_state["chat_messages"])
+        current_chat.append({"role": "assistant", "content": reply})
 
         # 音声読み上げ
         if tts_enabled and reply:
@@ -1036,29 +1287,27 @@ with tab_chat:
     # ボタン群（新規会話・エクスポート）
     btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
     with btn_col1:
-        if st.button("➕ 新しい会話"):
-            new_id = create_new_session()
-            st.session_state["current_session_id"] = new_id
-            st.session_state["chat_messages"] = []
+        if st.button("🗑 履歴クリア"):
+            st.session_state["category_chat_messages"][selected_category] = []
             st.session_state["last_user_prompt"] = ""
             st.rerun()
 
     # エクスポートボタン（会話がある場合のみ表示）
-    if st.session_state["chat_messages"]:
+    if current_chat:
         with btn_col2:
-            md_content = export_chat_to_markdown(st.session_state["chat_messages"])
+            md_content = export_chat_to_markdown(current_chat)
             st.download_button(
                 label="📄 Markdown",
                 data=md_content,
-                file_name=f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
+                file_name=f"chat_{selected_category}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.md",
                 mime="text/markdown",
             )
         with btn_col3:
-            json_content = export_chat_to_json(st.session_state["chat_messages"])
+            json_content = export_chat_to_json(current_chat)
             st.download_button(
                 label="📋 JSON",
                 data=json_content,
-                file_name=f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                file_name=f"chat_{selected_category}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                 mime="application/json",
             )
 
@@ -1104,6 +1353,38 @@ with tab_summary:
 # Settings tab (Prompt editor + persistence)
 # =============================
 with tab_settings:
+    st.subheader("🔌 接続設定")
+    new_base_url = st.text_input("LM Studio Base URL", value=st.session_state["base_url"])
+    if new_base_url != st.session_state["base_url"]:
+        st.session_state["base_url"] = new_base_url
+        st.rerun()
+
+    if lm_ok:
+        st.success(f"🟢 接続中（{checked_at} / {elapsed}ms）")
+    else:
+        st.error(f"🔴 未接続: {err}")
+
+    if st.button("🔄 接続を再確認"):
+        st.rerun()
+
+    st.divider()
+    st.subheader("⚙️ 生成設定")
+
+    new_max_chars = st.slider("入力文字数（要約）", 2000, 12000, st.session_state["max_chars"], 500)
+    st.caption(label_max_chars(new_max_chars))
+    if new_max_chars != st.session_state["max_chars"]:
+        st.session_state["max_chars"] = new_max_chars
+
+    new_max_tokens = st.slider("出力トークン", 200, 2000, st.session_state["max_tokens"], 50)
+    st.caption(label_max_tokens(new_max_tokens))
+    if new_max_tokens != st.session_state["max_tokens"]:
+        st.session_state["max_tokens"] = new_max_tokens
+
+    new_temperature = st.slider("Temperature", 0.0, 1.5, st.session_state["temperature"], 0.1)
+    if new_temperature != st.session_state["temperature"]:
+        st.session_state["temperature"] = new_temperature
+
+    st.divider()
     st.subheader("相棒プロンプト（保存・切替）")
     st.caption("ここでだけ編集できます。Chat/URL要約画面には表示しません。")
 
@@ -1302,3 +1583,59 @@ with tab_settings:
                 st.error("保存に失敗しました")
     else:
         st.warning("speakers_all.json が見つかりません")
+
+    st.divider()
+    st.subheader("📰 ニュースRSS設定")
+    st.caption("システムプロンプトに含めるニュースソースを管理できます")
+
+    current_feeds = app_settings.get("rss_feeds", DEFAULT_RSS_FEEDS.copy())
+
+    # 現在のフィード一覧
+    st.write("**登録済みフィード:**")
+    feeds_to_delete = []
+    for name, url in current_feeds.items():
+        col_name, col_del = st.columns([4, 1])
+        with col_name:
+            st.caption(f"• {name}: {url[:50]}...")
+        with col_del:
+            if st.button("🗑", key=f"del_rss_{name}"):
+                feeds_to_delete.append(name)
+
+    if feeds_to_delete:
+        for name in feeds_to_delete:
+            current_feeds.pop(name, None)
+        app_settings["rss_feeds"] = current_feeds
+        st.session_state["app_settings"] = app_settings
+        save_settings(app_settings)
+        st.success("削除しました")
+        st.rerun()
+
+    # 新規追加
+    st.write("**フィード追加:**")
+    col_rss_name, col_rss_url = st.columns([1, 3])
+    with col_rss_name:
+        new_rss_name = st.text_input("名前", placeholder="NHK", key="new_rss_name")
+    with col_rss_url:
+        new_rss_url = st.text_input("RSS URL", placeholder="https://...", key="new_rss_url")
+
+    if st.button("➕ フィード追加"):
+        name = (new_rss_name or "").strip()
+        url = (new_rss_url or "").strip()
+        if not name or not url:
+            st.warning("名前とURLを入力してください")
+        elif name in current_feeds:
+            st.warning("同名のフィードが既にあります")
+        else:
+            current_feeds[name] = url
+            app_settings["rss_feeds"] = current_feeds
+            st.session_state["app_settings"] = app_settings
+            save_settings(app_settings)
+            st.success(f"追加しました: {name}")
+            st.rerun()
+
+    if st.button("↩︎ デフォルトに戻す", key="reset_rss"):
+        app_settings["rss_feeds"] = DEFAULT_RSS_FEEDS.copy()
+        st.session_state["app_settings"] = app_settings
+        save_settings(app_settings)
+        st.success("デフォルトに戻しました")
+        st.rerun()
