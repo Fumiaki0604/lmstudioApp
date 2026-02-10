@@ -3,6 +3,7 @@ import time
 import base64
 import struct
 import uuid
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -336,6 +337,17 @@ def split_text_for_tts(text: str, max_len: int = 200) -> list:
         chunks.append(current.strip())
 
     return [c for c in chunks if c]
+
+
+def strip_urls_for_tts(text: str) -> str:
+    """TTS用にURLを除去する"""
+    # URLパターン（http/https）
+    text = re.sub(r"https?://[^\s]+", "", text)
+    # 「詳しくはこちら→」のような案内文も除去
+    text = re.sub(r"詳しくはこちら→?\s*", "", text)
+    # 連続する空白を1つに
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 
 def synthesize_voice(text: str, speaker_id: int, api_key: str = "", timeout: int = 30) -> tuple:
@@ -1081,9 +1093,41 @@ with tab_chat:
                     intro_reply = normalize_model_output(intro_reply)
                     current_chat.append({"role": "assistant", "content": intro_reply})
                     st.session_state["news_fingerprint"][selected_category] = news_fingerprint
-                except Exception:
-                    pass
+
+                    # ニュース紹介の音声読み上げ（カテゴリ別に保存）
+                    if tts_enabled and intro_reply:
+                        with st.spinner("🔊 音声生成中…"):
+                            # TTS用にURLを除去（表示テキストはそのまま）
+                            tts_text = strip_urls_for_tts(intro_reply)
+                            if tts_mode == "local":
+                                audio_data, tts_error = synthesize_voice_local_full(tts_text, speaker_id)
+                                audio_format = "wav"
+                            else:
+                                tts_key = get_tts_api_key()
+                                audio_data, tts_error = synthesize_voice_full(tts_text, speaker_id, api_key=tts_key)
+                                audio_format = "mp3"
+                            if audio_data:
+                                # カテゴリ別に音声を保存
+                                if "news_intro_audio" not in st.session_state:
+                                    st.session_state["news_intro_audio"] = {}
+                                st.session_state["news_intro_audio"][selected_category] = {
+                                    "data": audio_data,
+                                    "format": audio_format
+                                }
+                                st.session_state["last_audio"] = audio_data
+                                st.session_state["last_audio_format"] = audio_format
+                            elif tts_error:
+                                st.session_state["tts_error"] = tts_error
+                except Exception as e:
+                    st.session_state["tts_error"] = f"ニュース紹介エラー: {e}"
             st.rerun()
+
+        # 2回目以降の訪問: 保存済み音声があれば再生
+        elif tts_enabled and "news_intro_audio" in st.session_state:
+            stored = st.session_state["news_intro_audio"].get(selected_category)
+            if stored and not st.session_state.get("last_audio"):
+                st.session_state["last_audio"] = stored["data"]
+                st.session_state["last_audio_format"] = stored["format"]
 
         st.caption(f"💡 {selected_category}に関する話題でチャットします")
     else:
@@ -1115,16 +1159,12 @@ with tab_chat:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # 最後の音声があれば再生（非表示で自動再生）
+    # 最後の音声があれば再生
     if "last_audio" in st.session_state and st.session_state["last_audio"]:
         audio_data = st.session_state["last_audio"]
         audio_format = st.session_state.get("last_audio_format", "mp3")
-        audio_b64 = base64.b64encode(audio_data).decode()
         mime_type = "audio/wav" if audio_format == "wav" else "audio/mp3"
-        st.markdown(
-            f'<audio autoplay style="display:none;"><source src="data:{mime_type};base64,{audio_b64}" type="{mime_type}"></audio>',
-            unsafe_allow_html=True,
-        )
+        st.audio(audio_data, format=mime_type, autoplay=True)
         # 再生後はクリア（連続再生防止）
         st.session_state["last_audio"] = None
         st.session_state["last_audio_format"] = None
@@ -1159,35 +1199,58 @@ with tab_chat:
                 label_visibility="collapsed",
             )
         with col2:
-            mic_clicked = st.form_submit_button("🎤")
-        with col3:
+            # Enter押下時はこちらが実行される（最初のsubmit_button）
             submitted = st.form_submit_button("▶︎")
+        with col3:
+            mic_clicked = st.form_submit_button("🎤")
 
     # マイクボタン押下時の処理
     if mic_clicked:
         components.html("""
         <script>
-        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            const recognition = new SpeechRecognition();
-            recognition.lang = 'ja-JP';
-            recognition.continuous = false;
-            recognition.interimResults = false;
-            recognition.onresult = function(event) {
-                const transcript = event.results[0][0].transcript;
-                localStorage.setItem('stt_result', transcript);
-                window.parent.location.reload();
-            };
-            recognition.onerror = function(event) {
-                alert('音声認識エラー: ' + event.error);
-            };
-            recognition.start();
-        } else {
-            alert('このブラウザは音声入力に対応していません');
-        }
+        (function() {
+            try {
+                const parentWindow = window.parent;
+                const SpeechRecognition = parentWindow.SpeechRecognition || parentWindow.webkitSpeechRecognition
+                    || window.SpeechRecognition || window.webkitSpeechRecognition;
+
+                if (!SpeechRecognition) {
+                    alert('このブラウザは音声入力に対応していません');
+                    return;
+                }
+
+                const recognition = new SpeechRecognition();
+                recognition.lang = 'ja-JP';
+                recognition.continuous = false;
+                recognition.interimResults = false;
+
+                recognition.onresult = function(event) {
+                    const transcript = event.results[0][0].transcript;
+                    try {
+                        parentWindow.localStorage.setItem('stt_result', transcript);
+                    } catch(e) {
+                        localStorage.setItem('stt_result', transcript);
+                    }
+                    parentWindow.location.reload();
+                };
+
+                recognition.onerror = function(event) {
+                    alert('音声認識エラー: ' + event.error);
+                };
+
+                recognition.onend = function() {
+                    document.getElementById('stt_status').textContent = '認識完了';
+                };
+
+                recognition.start();
+                document.getElementById('stt_status').textContent = '🔴 録音中... 話しかけてください';
+            } catch(e) {
+                alert('音声認識の開始に失敗: ' + e.message);
+            }
+        })();
         </script>
-        <p style="color:#888;font-size:12px;">🔴 録音中... 話しかけてください</p>
-        """, height=30)
+        <p id="stt_status" style="color:#ff4b4b;font-size:14px;font-weight:bold;">🎤 マイク起動中...</p>
+        """, height=40)
         st.stop()
 
     st.markdown("</div>", unsafe_allow_html=True)
@@ -1265,14 +1328,16 @@ with tab_chat:
         # 音声読み上げ
         if tts_enabled and reply:
             with st.spinner("🔊 音声生成中…"):
+                # TTS用にURLを除去（表示テキストはそのまま）
+                tts_text = strip_urls_for_tts(reply)
                 if tts_mode == "local":
                     # ローカルVOICEVOX（WAV形式、文字数制限なし）
-                    audio_data, tts_error = synthesize_voice_local_full(reply, speaker_id)
+                    audio_data, tts_error = synthesize_voice_local_full(tts_text, speaker_id)
                     audio_format = "wav"
                 else:
                     # クラウドTTS Quest API（MP3形式）
                     tts_key = get_tts_api_key()
-                    audio_data, tts_error = synthesize_voice_full(reply, speaker_id, api_key=tts_key)
+                    audio_data, tts_error = synthesize_voice_full(tts_text, speaker_id, api_key=tts_key)
                     audio_format = "mp3"
 
                 if audio_data:
