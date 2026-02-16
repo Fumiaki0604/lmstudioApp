@@ -93,6 +93,7 @@ def current_buddy_prompt() -> str:
 DEFAULT_RSS_FEEDS = {
     "GIZMODO": "https://www.gizmodo.jp/index.xml",
     "LIFEHACKER": "https://www.lifehacker.jp/feed/index.xml",
+    "WIRED": "https://wired.jp/feed/rss",
     "Yahoo主要": "https://news.yahoo.co.jp/rss/topics/top-picks.xml",
     "Yahoo経済": "https://news.yahoo.co.jp/rss/categories/business.xml",
     "Bloomberg Markets": "https://feeds.bloomberg.com/markets/news.rss",
@@ -550,6 +551,44 @@ def concat_wav_data(wav_parts: list) -> bytes:
 
 
 # =============================
+# VOICEVOX User Dictionary
+# =============================
+def get_voicevox_user_dict() -> dict:
+    """VOICEVOX辞書の全エントリを取得"""
+    try:
+        r = requests.get(f"{LOCAL_VOICEVOX_URL}/user_dict", timeout=5)
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return {}
+
+
+def add_voicevox_dict_word(surface: str, pronunciation: str, accent_type: int = 0, priority: int = 5) -> Optional[str]:
+    """辞書に単語を追加。成功時はUUIDを返す"""
+    try:
+        r = requests.post(
+            f"{LOCAL_VOICEVOX_URL}/user_dict_word",
+            params={"surface": surface, "pronunciation": pronunciation, "accent_type": accent_type, "priority": priority},
+            timeout=5,
+        )
+        if r.status_code == 200:
+            return r.json()
+    except Exception:
+        pass
+    return None
+
+
+def delete_voicevox_dict_word(word_uuid: str) -> bool:
+    """辞書から単語を削除"""
+    try:
+        r = requests.delete(f"{LOCAL_VOICEVOX_URL}/user_dict_word/{word_uuid}", timeout=5)
+        return r.status_code == 204
+    except Exception:
+        return False
+
+
+# =============================
 # Weather (wttr.in)
 # =============================
 @st.cache_data(ttl=1800)  # 30分キャッシュ
@@ -999,7 +1038,7 @@ if not lm_ok:
 
 model = st.selectbox("使用モデル", models)
 
-tab_chat, tab_summary, tab_settings = st.tabs(["💬 Chat（相棒）", "📄 URL要約", "⚙️ 設定"])
+tab_chat, tab_radio, tab_summary, tab_settings = st.tabs(["💬 Chat（相棒）", "📻 ニュースラジオ", "📄 URL要約", "⚙️ 設定"])
 
 # =============================
 # Chat tab (LINE風：入力欄1つ + 下固定)
@@ -1159,12 +1198,13 @@ with tab_chat:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    # 最後の音声があれば再生
+    # 最後の音声があれば再生（UIなし）
     if "last_audio" in st.session_state and st.session_state["last_audio"]:
         audio_data = st.session_state["last_audio"]
         audio_format = st.session_state.get("last_audio_format", "mp3")
         mime_type = "audio/wav" if audio_format == "wav" else "audio/mp3"
-        st.audio(audio_data, format=mime_type, autoplay=True)
+        audio_b64 = base64.b64encode(audio_data).decode()
+        streamlit_js_eval(js_expressions=f"(new Audio('data:{mime_type};base64,{audio_b64}')).play()", key="tts_play")
         # 再生後はクリア（連続再生防止）
         st.session_state["last_audio"] = None
         st.session_state["last_audio_format"] = None
@@ -1377,6 +1417,113 @@ with tab_chat:
             )
 
 # =============================
+# News Radio tab
+# =============================
+with tab_radio:
+    st.subheader("📻 ニュースラジオ")
+    st.caption("全カテゴリの最新ニュースをまとめて読み上げます")
+
+    # ニュース取得
+    radio_all_news = get_all_news_by_category(max_per_source=5)
+    radio_categories = sorted(radio_all_news.keys())
+    total_articles = sum(len(v) for v in radio_all_news.values())
+
+    if radio_categories:
+        st.caption(f"📰 {len(radio_categories)}カテゴリ / {total_articles}件の記事")
+    else:
+        st.warning("ニュースが取得できませんでした")
+
+    # セッション状態の初期化
+    if "radio_script" not in st.session_state:
+        st.session_state["radio_script"] = ""
+    if "radio_audio" not in st.session_state:
+        st.session_state["radio_audio"] = None
+        st.session_state["radio_audio_format"] = None
+
+    if radio_categories and st.button("▶️ ラジオ開始", type="primary"):
+        # 全カテゴリのニュースをまとめる
+        all_news_text = ""
+        for cat in radio_categories:
+            items = radio_all_news[cat][:3]
+            if items:
+                all_news_text += f"\n【{cat}】\n"
+                for item in items:
+                    all_news_text += f"- {item['title']}: {item.get('description', '')[:100]}\n"
+
+        char_personality = speaker_personality or ""
+        first_p = ""
+        second_p = ""
+        if speaker_calls_profile:
+            first_p = speaker_calls_profile.get("first_person") or ""
+            second_p = speaker_calls_profile.get("second_person") or ""
+
+        radio_prompt = f"""あなたはラジオDJです。以下の最新ニュースをまとめて、ラジオ番組風に紹介してください。
+
+【ニュース一覧】
+{all_news_text}
+
+【必須ルール】
+- カテゴリごとにまとめて紹介する
+- 箇条書きは使わない。自然な話し言葉で流れるように紹介する
+- 各ニュースに対してDJとしてのコメントや感想を入れる
+- URLは含めない
+- 冒頭に「みなさんこんにちは！」等のオープニング挨拶を入れる
+- 最後に締めの挨拶を入れる
+- 全体で800文字程度に収める
+
+【キャラクター設定（これに従って話して）】
+{f'性格: {char_personality}' if char_personality else '性格: フレンドリーで親しみやすい'}
+{f'一人称: {first_p}' if first_p else ''}
+{f'相手の呼び方: {second_p}（ただし呼びかけには使わない）' if second_p else ''}"""
+
+        with st.spinner("📻 ラジオ原稿を作成中…"):
+            try:
+                radio_reply = call_lmstudio_chat_messages(
+                    base_url=base_url,
+                    model=model,
+                    messages=[{"role": "user", "content": radio_prompt}],
+                    temperature=temperature,
+                    max_tokens=1500,
+                    timeout=300,
+                )
+                radio_reply = normalize_model_output(radio_reply)
+                st.session_state["radio_script"] = radio_reply
+            except Exception as e:
+                st.error(f"原稿作成エラー: {e}")
+                st.session_state["radio_script"] = ""
+
+        # TTS生成
+        if tts_enabled and st.session_state["radio_script"]:
+            with st.spinner("🔊 音声生成中（長文のため時間がかかります）…"):
+                tts_text = strip_urls_for_tts(st.session_state["radio_script"])
+                if tts_mode == "local":
+                    audio_data, tts_error = synthesize_voice_local_full(tts_text, speaker_id, timeout=300)
+                    audio_format = "wav"
+                else:
+                    tts_key = get_tts_api_key()
+                    audio_data, tts_error = synthesize_voice_full(tts_text, speaker_id, api_key=tts_key)
+                    audio_format = "mp3"
+                if audio_data:
+                    st.session_state["radio_audio"] = audio_data
+                    st.session_state["radio_audio_format"] = audio_format
+                elif tts_error:
+                    st.warning(f"音声生成失敗: {tts_error}")
+
+        st.rerun()
+
+    # 保存済みの原稿を表示
+    if st.session_state["radio_script"]:
+        st.markdown(st.session_state["radio_script"])
+
+    # 音声再生
+    if st.session_state.get("radio_audio"):
+        audio_data = st.session_state["radio_audio"]
+        audio_format = st.session_state.get("radio_audio_format", "wav")
+        mime_type = "audio/wav" if audio_format == "wav" else "audio/mp3"
+        st.audio(audio_data, format=mime_type, autoplay=True)
+
+
+# =============================
 # URL Summary tab
 # =============================
 with tab_summary:
@@ -1585,10 +1732,58 @@ with tab_settings:
 
     # ローカルVOICEVOX接続テスト
     st.caption("**ローカルVOICEVOX接続状態:**")
-    if check_local_voicevox():
+    voicevox_connected = check_local_voicevox()
+    if voicevox_connected:
         st.caption("✅ 接続OK (localhost:50021)")
     else:
         st.caption("⚠️ 未接続 - VOICEVOXを起動してください")
+
+    st.divider()
+    st.subheader("📖 VOICEVOX辞書")
+    st.caption("読み間違いを修正できます（例: 相棒→アイボウ）")
+
+    if voicevox_connected:
+        # 単語登録
+        dict_col1, dict_col2, dict_col3 = st.columns([2, 2, 1])
+        with dict_col1:
+            dict_surface = st.text_input("単語（漢字など）", placeholder="例: 相棒", key="dict_surface")
+        with dict_col2:
+            dict_pronunciation = st.text_input("読み（カタカナ）", placeholder="例: アイボウ", key="dict_pronunciation")
+        with dict_col3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("➕ 登録"):
+                s = (dict_surface or "").strip()
+                p = (dict_pronunciation or "").strip()
+                if not s or not p:
+                    st.warning("単語と読みを入力してください")
+                else:
+                    result = add_voicevox_dict_word(s, p)
+                    if result:
+                        st.success(f"「{s}」→「{p}」を登録しました")
+                        st.session_state["dict_surface"] = ""
+                        st.session_state["dict_pronunciation"] = ""
+                        st.rerun()
+                    else:
+                        st.error("登録に失敗しました")
+
+        # 登録済み一覧
+        user_dict = get_voicevox_user_dict()
+        if user_dict:
+            st.caption(f"登録済み: {len(user_dict)}件")
+            for word_uuid, entry in user_dict.items():
+                dcol1, dcol2, dcol3 = st.columns([3, 3, 1])
+                with dcol1:
+                    st.markdown(entry["surface"])
+                with dcol2:
+                    st.markdown(entry["pronunciation"])
+                with dcol3:
+                    if st.button("🗑", key=f"del_{word_uuid}"):
+                        if delete_voicevox_dict_word(word_uuid):
+                            st.rerun()
+        else:
+            st.caption("登録済みの単語はありません")
+    else:
+        st.caption("VOICEVOXが未接続のため辞書機能は使えません")
 
     st.divider()
     st.subheader("🎭 キャラクター設定")
