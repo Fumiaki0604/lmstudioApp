@@ -1,4 +1,5 @@
 import json
+import os
 import time
 import base64
 import struct
@@ -236,7 +237,32 @@ def save_speakers(speakers: list) -> None:
     load_speakers.clear()
 
 
-def update_speaker_profile(name: str, personality: str, first_person: str, second_person: str) -> bool:
+def save_speaker_icon(name: str, icon_data: bytes, ext: str = "png") -> Optional[str]:
+    """キャラアイコンを保存しパスを返す"""
+    safe_name = re.sub(r'[^\w]', '_', name)
+    icon_path = os.path.join(os.path.dirname(__file__), "icons", f"{safe_name}.{ext}")
+    try:
+        with open(icon_path, "wb") as f:
+            f.write(icon_data)
+        return icon_path
+    except Exception:
+        return None
+
+
+def update_speaker_icon(name: str, icon_path: str) -> bool:
+    """キャラのアイコンパスを保存"""
+    speakers = load_speakers_raw()
+    for sp in speakers:
+        if sp.get("name") == name:
+            if "dormitory_profile" not in sp or sp["dormitory_profile"] is None:
+                sp["dormitory_profile"] = {}
+            sp["dormitory_profile"]["icon"] = icon_path
+            save_speakers(speakers)
+            return True
+    return False
+
+
+def update_speaker_profile(name: str, personality: str, first_person: str, second_person: str, gender: str = "", char_nicknames: Optional[dict] = None) -> bool:
     """指定キャラクターのプロフィールを更新"""
     speakers = load_speakers_raw()
     for sp in speakers:
@@ -245,12 +271,15 @@ def update_speaker_profile(name: str, personality: str, first_person: str, secon
             if "dormitory_profile" not in sp or sp["dormitory_profile"] is None:
                 sp["dormitory_profile"] = {}
             sp["dormitory_profile"]["personality"] = personality if personality.strip() else None
+            sp["dormitory_profile"]["gender"] = gender if gender.strip() else None
 
             # calls_profile を更新
             if "calls_profile" not in sp or sp["calls_profile"] is None:
                 sp["calls_profile"] = {}
             sp["calls_profile"]["first_person"] = first_person if first_person.strip() else None
             sp["calls_profile"]["second_person"] = second_person if second_person.strip() else None
+            if char_nicknames is not None:
+                sp["calls_profile"]["char_nicknames"] = char_nicknames
 
             save_speakers(speakers)
             return True
@@ -275,12 +304,15 @@ def get_speaker_data() -> dict:
             continue
         profile = sp.get("dormitory_profile", {}) or {}
         personality = profile.get("personality")
+        gender = profile.get("gender")
+        icon = profile.get("icon")
         calls = sp.get("calls_profile", {}) or {}
         first_person = calls.get("first_person")
         second_person = calls.get("second_person")
+        char_nicknames = calls.get("char_nicknames") or {}
         calls_info = None
-        if first_person or second_person:
-            calls_info = {"first_person": first_person, "second_person": second_person}
+        if first_person or second_person or char_nicknames:
+            calls_info = {"first_person": first_person, "second_person": second_person, "char_nicknames": char_nicknames}
 
         styles = {}
         for style in sp.get("styles", []):
@@ -292,6 +324,8 @@ def get_speaker_data() -> dict:
         if styles:
             data[name] = {
                 "personality": personality,
+                "gender": gender,
+                "icon": icon,
                 "calls_profile": calls_info,
                 "styles": styles,
             }
@@ -338,6 +372,14 @@ def split_text_for_tts(text: str, max_len: int = 200) -> list:
         chunks.append(current.strip())
 
     return [c for c in chunks if c]
+
+
+def build_talk_target_instruction(other_char_names: list) -> str:
+    """話しかけ先の指示を人数に応じて生成"""
+    targets = ["ユーザー"] + other_char_names
+    pct = round(100 / len(targets))
+    parts = [f"{t}に話しかける({pct}%)" for t in targets]
+    return "話しかける相手は、" + "、".join(parts) + "の確率で使い分けること。"
 
 
 def strip_urls_for_tts(text: str) -> str:
@@ -687,10 +729,37 @@ def get_rss_feeds() -> dict:
 
 def normalize_category(cat: str, source_name: str) -> str:
     """カテゴリを正規化（類似カテゴリをまとめる）"""
-    lower = cat.lower()
+    lower = cat.lower().strip()
     # Bloomberg系・NMS系・Markets系は金融にまとめる
     if source_name.startswith("Bloomberg") or lower.startswith("nms") or "market" in lower:
         return "金融"
+    # 英語カテゴリの統一マッピング
+    category_map = {
+        "business": "ビジネス",
+        "economy": "経済",
+        "technology": "テクノロジー",
+        "tech": "テクノロジー",
+        "science": "サイエンス",
+        "health": "健康",
+        "sports": "スポーツ",
+        "sport": "スポーツ",
+        "entertainment": "エンタメ",
+        "culture": "カルチャー",
+        "politics": "政治",
+        "world": "国際",
+        "news": "ニュース",
+        "opinion": "オピニオン",
+        "lifestyle": "ライフスタイル",
+        "life": "ライフスタイル",
+        "gear": "ガジェット",
+        "gadget": "ガジェット",
+        "event": "イベント",
+        "mobility": "モビリティ",
+        "well-being": "健康",
+        "wellbeing": "健康",
+    }
+    if lower in category_map:
+        return category_map[lower]
     return cat
 
 
@@ -840,11 +909,15 @@ def label_max_tokens(n: int) -> str:
 def normalize_model_output(text: str) -> str:
     if not text:
         return text
-    return (
+    text = (
         text.replace("<br/>", "\n")
         .replace("<br>", "\n")
         .replace("&nbsp;", " ")
     )
+    # LLMが付与するメタコメント行を除去
+    lines = text.split("\n")
+    lines = [l for l in lines if not re.match(r"^(\**)?\s*(Note|注|補足|※補足)\s*[:：]", l)]
+    return "\n".join(lines).strip()
 
 
 def export_chat_to_markdown(messages: list) -> str:
@@ -951,19 +1024,71 @@ with st.sidebar:
 
         speaker_id = char_info["styles"][selected_style]
         speaker_personality = char_info["personality"]
+        speaker_gender = char_info.get("gender")
         speaker_calls_profile = char_info["calls_profile"]
 
         if speaker_personality:
             st.caption(f"🎭 {speaker_personality}")
+        if speaker_gender:
+            st.caption(f"👤 性別: {speaker_gender}")
         if speaker_calls_profile:
             fp = speaker_calls_profile.get("first_person") or "?"
             sp_person = speaker_calls_profile.get("second_person") or "?"
             st.caption(f"👤 一人称: {fp} / 二人称: {sp_person}")
+
+        # 会話モード選択
+        st.divider()
+        chat_mode = st.radio("会話モード", ["1対1", "3人", "4人"], horizontal=True, key="chat_mode")
+
+        # キャラB/C選択（複数人モード時）
+        chat_characters = [{"name": selected_char, "id": speaker_id, "personality": speaker_personality, "gender": speaker_gender, "calls_profile": speaker_calls_profile}]
+        if chat_mode in ["3人", "4人"]:
+            other_chars = [n for n in char_names if n != selected_char]
+            if other_chars:
+                st.caption("**キャラB**")
+                # 前回選択値を維持
+                prev_b = st.session_state.get("_prev_char_b", "")
+                idx_b = other_chars.index(prev_b) if prev_b in other_chars else 0
+                selected_char_b = st.selectbox("キャラクターB", other_chars, index=idx_b, key="char_b_select", label_visibility="collapsed")
+                st.session_state["_prev_char_b"] = selected_char_b
+                char_info_b = speaker_data[selected_char_b]
+                style_names_b = list(char_info_b["styles"].keys())
+                default_style_idx_b = next((i for i, s in enumerate(style_names_b) if s == "ノーマル"), 0)
+                selected_style_b = st.selectbox("スタイルB", style_names_b, index=default_style_idx_b, key="style_b_select")
+                chat_characters.append({
+                    "name": selected_char_b,
+                    "id": char_info_b["styles"][selected_style_b],
+                    "personality": char_info_b["personality"],
+                    "gender": char_info_b.get("gender"),
+                    "calls_profile": char_info_b["calls_profile"],
+                })
+        if chat_mode == "4人":
+            other_chars_c = [n for n in char_names if n != selected_char and n != selected_char_b]
+            if other_chars_c:
+                st.caption("**キャラC**")
+                prev_c = st.session_state.get("_prev_char_c", "")
+                idx_c = other_chars_c.index(prev_c) if prev_c in other_chars_c else 0
+                selected_char_c = st.selectbox("キャラクターC", other_chars_c, index=idx_c, key="char_c_select", label_visibility="collapsed")
+                st.session_state["_prev_char_c"] = selected_char_c
+                char_info_c = speaker_data[selected_char_c]
+                style_names_c = list(char_info_c["styles"].keys())
+                default_style_idx_c = next((i for i, s in enumerate(style_names_c) if s == "ノーマル"), 0)
+                selected_style_c = st.selectbox("スタイルC", style_names_c, index=default_style_idx_c, key="style_c_select")
+                chat_characters.append({
+                    "name": selected_char_c,
+                    "id": char_info_c["styles"][selected_style_c],
+                    "personality": char_info_c["personality"],
+                    "gender": char_info_c.get("gender"),
+                    "calls_profile": char_info_c["calls_profile"],
+                })
     else:
         st.warning("speakers_all.json が見つかりません")
         speaker_id = 3
         speaker_personality = None
+        speaker_gender = None
         speaker_calls_profile = None
+        chat_mode = "1対1"
+        chat_characters = []
 
     st.divider()
 
@@ -1093,18 +1218,31 @@ with tab_chat:
 
         # 初回 or キャッシュ更新で新記事が来たらAIがニュース紹介
         should_introduce = (not current_chat) or fingerprint_changed
+        if st.session_state.get("_news_generating"):
+            should_introduce = False
         if should_introduce and cat_news:
+            st.session_state["_news_generating"] = True
             news_count = min(len(cat_news), 3)
             news_text = get_news_for_category(selected_category, max_items=news_count)
-            char_personality = speaker_personality or ""
-            first_p = ""
-            second_p = ""
-            if speaker_calls_profile:
-                first_p = speaker_calls_profile.get("first_person") or ""
-                second_p = speaker_calls_profile.get("second_person") or ""
 
-            intro_prefix = "新しいニュースが入ってきたよ！\n\n" if fingerprint_changed else ""
-            intro_prompt = f"""{intro_prefix}友達に話題をふるように、以下の最新ニュース{news_count}つを紹介して。
+            def build_intro_prompt(char_info_dict, role_instruction=""):
+                """ニュース紹介用プロンプトを構築"""
+                c_personality = char_info_dict.get("personality") or ""
+                c_gender = char_info_dict.get("gender") or ""
+                c_calls = char_info_dict.get("calls_profile") or {}
+                fp = c_calls.get("first_person") or ""
+                sp = c_calls.get("second_person") or ""
+                c_nicknames = c_calls.get("char_nicknames") or {}
+                # 複数人モード時の呼び名
+                nn_lines = ""
+                other_char_names = [c["name"] for c in chat_characters if c["name"] != char_info_dict["name"]]
+                for on in other_char_names:
+                    nn = c_nicknames.get(on)
+                    if nn:
+                        nn_lines += f"- {on}のことは必ず「{nn}」と呼ぶこと\n"
+                prefix = "新しいニュースが入ってきたよ！\n\n" if fingerprint_changed else ""
+                base_instruction = role_instruction or f"友達に話題をふるように、以下の最新ニュース{news_count}つを紹介して。"
+                return f"""{prefix}{base_instruction}
 
 【ニュース】
 {news_text}
@@ -1112,53 +1250,148 @@ with tab_chat:
 【必須ルール】
 - 箇条書きは絶対に使わない
 - 各ニュースを紹介した後、必ず参照元URLを「詳しくはこちら→ URL」の形で記載
-- 各ニュースに対してキャラクターとしての感想を述べる
+- 各ニュースに対してキャラクターとしての感想を自然に入れる。ただし毎回同じパターン（「このニュースを見て〜は…」等）の定型文にしない。感想の入れ方を毎回変えること
+- 冒頭で一人称を名乗らない。いきなり話題に入る（例:「ねえねえ、こんなニュースあったんだけど」）
 - 全体的なトレンドのまとめは不要
+- 「Note:」「注:」等のメタコメントや補足説明は絶対に含めない。純粋に会話文だけを出力すること
 
 【キャラクター設定（これに従って話して）】
-{f'性格: {char_personality}' if char_personality else '性格: フレンドリーで親しみやすい'}
-{f'一人称: {first_p}' if first_p else ''}
-{f'相手の呼び方: {second_p}（ただし呼びかけには使わない）' if second_p else ''}"""
-            with st.spinner(f"📰 {selected_category}の最新ニュースを確認中…"):
-                try:
-                    intro_reply = call_lmstudio_chat_messages(
-                        base_url=base_url,
-                        model=model,
-                        messages=[{"role": "user", "content": intro_prompt}],
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        timeout=180,
-                    )
-                    intro_reply = normalize_model_output(intro_reply)
-                    current_chat.append({"role": "assistant", "content": intro_reply})
-                    st.session_state["news_fingerprint"][selected_category] = news_fingerprint
+{f'性格: {c_personality}' if c_personality else '性格: フレンドリーで親しみやすい'}
+{f'性別: {c_gender}' if c_gender else ''}
+{f'一人称: {fp}（必ずこの一人称を使うこと）' if fp else ''}
+{f'相手の呼び方: {sp}（ただし呼びかけには使わない）' if sp else ''}
+{nn_lines}"""
 
-                    # ニュース紹介の音声読み上げ（カテゴリ別に保存）
-                    if tts_enabled and intro_reply:
-                        with st.spinner("🔊 音声生成中…"):
-                            # TTS用にURLを除去（表示テキストはそのまま）
-                            tts_text = strip_urls_for_tts(intro_reply)
+            # --- 1対1モード: キャラAのみ紹介 ---
+            if chat_mode == "1対1":
+                intro_prompt = build_intro_prompt(chat_characters[0])
+                with st.spinner(f"📰 {selected_category}の最新ニュースを確認中…"):
+                    try:
+                        intro_reply = call_lmstudio_chat_messages(
+                            base_url=base_url, model=model,
+                            messages=[{"role": "user", "content": intro_prompt}],
+                            temperature=temperature, max_tokens=max_tokens, timeout=180,
+                        )
+                        intro_reply = normalize_model_output(intro_reply)
+                        current_chat.append({"role": "assistant", "content": intro_reply})
+                        st.session_state["news_fingerprint"][selected_category] = news_fingerprint
+
+                        if tts_enabled and intro_reply:
+                            with st.spinner("🔊 音声生成中…"):
+                                tts_text = strip_urls_for_tts(intro_reply)
+                                if tts_mode == "local":
+                                    audio_data, tts_error = synthesize_voice_local_full(tts_text, speaker_id)
+                                    audio_format = "wav"
+                                else:
+                                    tts_key = get_tts_api_key()
+                                    audio_data, tts_error = synthesize_voice_full(tts_text, speaker_id, api_key=tts_key)
+                                    audio_format = "mp3"
+                                if audio_data:
+                                    if "news_intro_audio" not in st.session_state:
+                                        st.session_state["news_intro_audio"] = {}
+                                    st.session_state["news_intro_audio"][selected_category] = {"data": audio_data, "format": audio_format}
+                                    st.session_state["last_audio"] = audio_data
+                                    st.session_state["last_audio_format"] = audio_format
+                                elif tts_error:
+                                    st.session_state["tts_error"] = tts_error
+                    except Exception as e:
+                        st.session_state["tts_error"] = f"ニュース紹介エラー: {e}"
+
+            # --- 複数人モード: キャラA=要約、キャラB=深掘り、キャラC=別視点 ---
+            else:
+                audio_queue = []
+                prev_replies = []
+                for idx, char in enumerate(chat_characters):
+                    # キャラAのみニュース原文付きで紹介。B/CはキャラAの発言を踏まえて会話
+                    if idx == 0:
+                        instruction = f"友達に話題をふるように、以下の最新ニュース{news_count}つを紹介して。"
+                        intro_prompt = build_intro_prompt(char, role_instruction=instruction)
+                    else:
+                        # ニュース原文は渡さない。前のキャラの発言だけを元に会話させる
+                        intro_prompt = None
+                    # 前のキャラの返答をコンテキストとして追加
+                    c_calls = char.get("calls_profile") or {}
+                    c_fp = c_calls.get("first_person") or ""
+                    c_sp = c_calls.get("second_person") or ""
+                    c_personality = char.get("personality") or ""
+                    c_gender = char.get("gender") or ""
+                    c_nicknames = c_calls.get("char_nicknames") or {}
+                    nickname_lines = ""
+                    all_other_names = [c["name"] for c in chat_characters if c["name"] != char["name"]]
+                    for on in all_other_names:
+                        nn = c_nicknames.get(on)
+                        if nn:
+                            nickname_lines += f"- {on}のことは必ず「{nn}」と呼ぶこと。「{on}」とフルネームで呼ばないこと。\n"
+                    persona_block = f"""あなたは「{char['name']}」です。
+{f'- 一人称は「{c_fp}」を使うこと。' if c_fp else ''}
+{f'- 性別: {c_gender}' if c_gender else ''}
+{f'- ユーザーへの呼びかけは「{c_sp}」を使うこと。他のキャラの二人称は絶対に使わないこと。' if c_sp else ''}
+{nickname_lines}{f'- 性格: {c_personality}' if c_personality else ''}
+- 他のキャラの口調・一人称・二人称・話し方を絶対に真似しないこと。自分独自の視点と言葉で話すこと。
+- {build_talk_target_instruction([p['name'] for p in prev_replies])}"""
+
+                    if idx == 0:
+                        # キャラA: ニュース紹介プロンプト（従来通り）
+                        msgs = [{"role": "user", "content": intro_prompt}]
+                    else:
+                        # キャラB/C: systemロールでペルソナを強制し、前のキャラの発言を元に会話
+                        if idx == 1:
+                            role_desc = f"""{prev_replies[0]['name']}がニュースを紹介しました。
+この中から最も気になったニュース1つだけを選び、{prev_replies[0]['name']}とは全く違う切り口で深掘りしてください。
+- {prev_replies[0]['name']}が既に述べた感想や例え話は絶対に繰り返さないこと
+- 自分の経験や独自の視点から語ること
+- 同じニュースの別の側面や、社会への影響など新しい角度で語ること"""
+                        else:
+                            prev_names = "、".join([p["name"] for p in prev_replies])
+                            role_desc = f"""{prev_names}が会話しています。
+まだ誰も触れていないニュースか、触れられたニュースの全く新しい側面について語ってください。
+- 他のキャラが既に述べた内容は一切繰り返さないこと
+- 自分ならではの独自の視点で語ること"""
+
+                        system_prompt = f"""{persona_block}
+
+{role_desc}
+
+【絶対厳守】上記のキャラクター設定（一人称・性別・性格・口調）に必ず従うこと。他のキャラの話し方に絶対に引きずられないこと。"""
+                        msgs = [{"role": "system", "content": system_prompt}]
+                        for prev in prev_replies:
+                            msgs.append({"role": "assistant", "content": f"{prev['reply']}"})
+                        msgs.append({"role": "user", "content": "あなたの番です。上記のキャラクター設定を守って話してください。"})
+
+                    with st.spinner(f"📰 {char['name']}がニュースを確認中…"):
+                        try:
+                            reply = call_lmstudio_chat_messages(
+                                base_url=base_url, model=model, messages=msgs,
+                                temperature=temperature, max_tokens=max_tokens, timeout=180,
+                            )
+                            reply = normalize_model_output(reply)
+                        except Exception as e:
+                            reply = f"エラー: {e}"
+
+                    current_chat.append({"role": "assistant", "content": reply, "char_name": char["name"]})
+                    prev_replies.append({"name": char["name"], "reply": reply})
+
+                    if tts_enabled and reply:
+                        with st.spinner(f"🔊 {char['name']}の音声生成中…"):
+                            tts_text = strip_urls_for_tts(reply)
                             if tts_mode == "local":
-                                audio_data, tts_error = synthesize_voice_local_full(tts_text, speaker_id)
-                                audio_format = "wav"
+                                ad, te = synthesize_voice_local_full(tts_text, char["id"])
+                                af = "wav"
                             else:
                                 tts_key = get_tts_api_key()
-                                audio_data, tts_error = synthesize_voice_full(tts_text, speaker_id, api_key=tts_key)
-                                audio_format = "mp3"
-                            if audio_data:
-                                # カテゴリ別に音声を保存
-                                if "news_intro_audio" not in st.session_state:
-                                    st.session_state["news_intro_audio"] = {}
-                                st.session_state["news_intro_audio"][selected_category] = {
-                                    "data": audio_data,
-                                    "format": audio_format
-                                }
-                                st.session_state["last_audio"] = audio_data
-                                st.session_state["last_audio_format"] = audio_format
-                            elif tts_error:
-                                st.session_state["tts_error"] = tts_error
-                except Exception as e:
-                    st.session_state["tts_error"] = f"ニュース紹介エラー: {e}"
+                                ad, te = synthesize_voice_full(tts_text, char["id"], api_key=tts_key)
+                                af = "mp3"
+                            if ad:
+                                audio_queue.append({"data": ad, "format": af})
+
+                st.session_state["news_fingerprint"][selected_category] = news_fingerprint
+                if audio_queue:
+                    st.session_state["last_audio"] = audio_queue[0]["data"]
+                    st.session_state["last_audio_format"] = audio_queue[0]["format"]
+                    if len(audio_queue) > 1:
+                        st.session_state["audio_queue"] = audio_queue[1:]
+
+            st.session_state["_news_generating"] = False
             st.rerun()
 
         # 2回目以降の訪問: 保存済み音声があれば再生
@@ -1188,24 +1421,80 @@ with tab_chat:
         }
         .spacer { height: 110px; }
         footer {visibility: hidden;}
+        /* チャットアバターのサイズ調整・背景透過 */
+        .stChatMessage [data-testid="chatAvatarIcon-assistant"] img,
+        .stChatMessage img[class*="avatar"],
+        [data-testid="stChatMessage"] img {
+            width: 40px !important;
+            height: 40px !important;
+            min-width: 40px !important;
+            min-height: 40px !important;
+            border-radius: 50% !important;
+            object-fit: cover !important;
+            background: transparent !important;
+        }
         </style>
         """,
         unsafe_allow_html=True,
     )
 
+    # キャラアイコンマップ構築
+    char_icon_map = {}
+    if speaker_data:
+        for cname, cinfo in speaker_data.items():
+            icon_path = cinfo.get("icon")
+            if icon_path and os.path.exists(icon_path):
+                char_icon_map[cname] = icon_path
+
     # 会話ログ（カテゴリ別）
     for msg in current_chat:
-        with st.chat_message(msg["role"]):
+        char_name = msg.get("char_name")
+        avatar = char_icon_map.get(char_name) if char_name else None
+        # 1対1モードでchar_nameがない場合はキャラAのアイコン
+        if not char_name and msg["role"] == "assistant" and chat_characters:
+            avatar = char_icon_map.get(chat_characters[0]["name"])
+        with st.chat_message(msg["role"], avatar=avatar):
+            if char_name:
+                st.caption(f"🎭 {char_name}")
             st.markdown(msg["content"])
 
-    # 最後の音声があれば再生（UIなし）
+    # 音声再生（UIなし）- キュー対応
     if "last_audio" in st.session_state and st.session_state["last_audio"]:
-        audio_data = st.session_state["last_audio"]
-        audio_format = st.session_state.get("last_audio_format", "mp3")
-        mime_type = "audio/wav" if audio_format == "wav" else "audio/mp3"
-        audio_b64 = base64.b64encode(audio_data).decode()
-        streamlit_js_eval(js_expressions=f"(new Audio('data:{mime_type};base64,{audio_b64}')).play()", key="tts_play")
-        # 再生後はクリア（連続再生防止）
+        # 全音声をキューにまとめてJS側で連続再生
+        all_audio = [{"data": st.session_state["last_audio"], "format": st.session_state.get("last_audio_format", "mp3")}]
+        if st.session_state.get("audio_queue"):
+            all_audio.extend(st.session_state["audio_queue"])
+            st.session_state["audio_queue"] = []
+
+        if len(all_audio) == 1:
+            a = all_audio[0]
+            mime = "audio/wav" if a["format"] == "wav" else "audio/mp3"
+            b64 = base64.b64encode(a["data"]).decode()
+            streamlit_js_eval(js_expressions=f"(new Audio('data:{mime};base64,{b64}')).play()", key="tts_play")
+        else:
+            # 複数音声を順番に再生するJS
+            js_parts = []
+            for i, a in enumerate(all_audio):
+                mime = "audio/wav" if a["format"] == "wav" else "audio/mp3"
+                b64 = base64.b64encode(a["data"]).decode()
+                js_parts.append(f"'{mime}|{b64}'")
+            js_array = ",".join(js_parts)
+            js_code = f"""
+            (function() {{
+                var queue = [{js_array}];
+                var idx = 0;
+                function playNext() {{
+                    if (idx >= queue.length) return;
+                    var parts = queue[idx].split('|');
+                    var audio = new Audio('data:' + parts[0] + ';base64,' + parts[1]);
+                    audio.onended = function() {{ idx++; playNext(); }};
+                    audio.play();
+                }}
+                playNext();
+            }})()
+            """
+            streamlit_js_eval(js_expressions=js_code, key="tts_play_queue")
+
         st.session_state["last_audio"] = None
         st.session_state["last_audio_format"] = None
 
@@ -1299,6 +1588,126 @@ with tab_chat:
     if st.session_state.get("stt_text"):
         st.session_state["stt_text"] = ""
 
+    # --- システムプロンプト構築用ヘルパー ---
+    def build_system_prompt(char_info_dict, extra=""):
+        """キャラ情報dictからシステムプロンプトを構築"""
+        sys = current_buddy_prompt()
+        now = datetime.now(ZoneInfo("Asia/Tokyo"))
+        weekdays = ["月", "火", "水", "木", "金", "土", "日"]
+        today_str = now.strftime("%Y年%m月%d日") + f"（{weekdays[now.weekday()]}）"
+        time_str = now.strftime("%H:%M")
+        period = get_time_period(now.hour)
+        sys += f"\n\n【現在の日時】{today_str} {time_str}（{period}）"
+        weather = get_weather_meguro()
+        if weather:
+            sys += f"\n【目黒区の天気】{weather['desc']}、気温{weather['temp']}℃（体感{weather['feel']}℃）、湿度{weather['humidity']}%"
+        current_cat = st.session_state.get("chat_category", "フリー")
+        if current_cat == "フリー":
+            news = get_news_summary(max_per_source=3)
+            if news:
+                sys += f"\n\n【最新ニュース】\n{news}"
+        else:
+            cat_news_text = get_news_for_category(current_cat)
+            if cat_news_text:
+                sys += f"\n\n【{current_cat}の最新ニュース】\n{cat_news_text}"
+                sys += f"\n\n【会話の焦点】ユーザーは「{current_cat}」に関する話題に興味があります。この分野のニュースについて詳しく解説・議論してください。"
+        if tts_enabled and tts_mode == "cloud":
+            sys += "\n\n【重要】音声読み上げモードです。返答は簡潔に、3〜4文程度（150文字以内）でまとめてください。"
+        c_personality = char_info_dict.get("personality")
+        c_gender = char_info_dict.get("gender")
+        c_calls = char_info_dict.get("calls_profile") or {}
+        if c_personality:
+            sys += f"\n\n【キャラクター設定】\nあなたは「{char_info_dict['name']}」です。以下の性格で返答してください: {c_personality}"
+        if c_gender:
+            sys += f"\n性別: {c_gender}"
+        first_p = c_calls.get("first_person")
+        second_p = c_calls.get("second_person")
+        if first_p or second_p:
+            pronoun_text = "【話し方の設定】\n"
+            if first_p:
+                pronoun_text += f"- 自分のことは「{first_p}」と呼んでください\n"
+            if second_p:
+                pronoun_text += f"- 相手（ユーザー）のことは会話の流れで「{second_p}」と呼んでください（ただし挨拶や呼びかけには使わない。「こんにちは、{second_p}」はNG）\n"
+            sys += "\n\n" + pronoun_text.strip()
+        if extra:
+            sys += "\n\n" + extra
+        return sys
+
+    def generate_tts_for_char(text, char_speaker_id):
+        """キャラのspeaker_idでTTS生成し音声データを返す"""
+        tts_text = strip_urls_for_tts(text)
+        if tts_mode == "local":
+            ad, te = synthesize_voice_local_full(tts_text, char_speaker_id)
+            return ad, "wav", te
+        else:
+            tts_key = get_tts_api_key()
+            ad, te = synthesize_voice_full(tts_text, char_speaker_id, api_key=tts_key)
+            return ad, "mp3", te
+
+    def run_multi_char_round(chat_characters, current_chat, base_url, model, temperature, max_tokens, tts_enabled):
+        """複数キャラの1ラウンド分の応答を生成"""
+        audio_queue = []
+        for idx, char in enumerate(chat_characters):
+            char_name = char["name"]
+            other_names = [c["name"] for c in chat_characters if c["name"] != char_name]
+            c_calls = char.get("calls_profile") or {}
+            c_fp = c_calls.get("first_person") or ""
+            c_sp = c_calls.get("second_person") or ""
+            c_nicknames = c_calls.get("char_nicknames") or {}
+            # 全キャラ共通: ニックネーム指示
+            nickname_lines = ""
+            for on in other_names:
+                nn = c_nicknames.get(on)
+                if nn:
+                    nickname_lines += f"- {on}のことは必ず「{nn}」と呼ぶこと。「{on}」とフルネームで呼ばないこと。\n"
+            # ペルソナ厳守指示（キャラA含む全員に付与）
+            extra = f"""【会話の状況】あなたは{','.join(other_names)}とユーザーの会話に参加しています。{'直前の発言を踏まえて、自分の意見や感想を述べてください。他のキャラの発言を繰り返さず、新しい視点や感想を加えてください。' if idx > 0 else ''}
+{'- ' + build_talk_target_instruction(other_names) if idx > 0 else ''}
+【絶対厳守】あなたは「{char_name}」です。自分の返答だけを出力すること。他のキャラの返答は絶対に書かないこと。【キャラ名】のような表記も使わないこと。
+{f'- 一人称は必ず「{c_fp}」を使うこと。他のキャラの一人称は絶対に使わないこと。' if c_fp else ''}
+{f'- ユーザーへの呼びかけは「{c_sp}」を使うこと。' if c_sp else ''}
+【呼び名ルール（厳守）】
+{nickname_lines if nickname_lines else ''}- 他のキャラの口調・一人称・二人称を絶対に真似しないでください。自分のキャラクター設定だけに忠実に話してください。"""
+
+            system = build_system_prompt(char, extra=extra)
+            history = []
+            for m in current_chat[-16:]:
+                cn = m.get("char_name")
+                if m["role"] == "user":
+                    history.append({"role": "user", "content": m["content"]})
+                elif cn == char_name:
+                    history.append({"role": "assistant", "content": m["content"]})
+                elif cn:
+                    # 他キャラの発言: 口調が伝染しないよう要点だけ伝える
+                    history.append({"role": "user", "content": f"（{cn}が以下の趣旨の発言をしました）: {m['content']}"})
+                else:
+                    history.append({"role": "assistant", "content": m["content"]})
+            messages = [{"role": "system", "content": system}] + history
+
+            with st.spinner(f"💭 {char_name}が考え中…"):
+                try:
+                    reply = call_lmstudio_chat_messages(
+                        base_url=base_url, model=model, messages=messages,
+                        temperature=temperature, max_tokens=max_tokens, timeout=180,
+                    )
+                    reply = normalize_model_output(reply)
+                except Exception as e:
+                    reply = f"エラー: {e}"
+
+            current_chat.append({"role": "assistant", "content": reply, "char_name": char_name})
+
+            if tts_enabled and reply:
+                with st.spinner(f"🔊 {char_name}の音声生成中…"):
+                    audio_data, audio_format, tts_error = generate_tts_for_char(reply, char["id"])
+                    if audio_data:
+                        audio_queue.append({"data": audio_data, "format": audio_format})
+
+        if audio_queue:
+            st.session_state["last_audio"] = audio_queue[0]["data"]
+            st.session_state["last_audio_format"] = audio_queue[0]["format"]
+            if len(audio_queue) > 1:
+                st.session_state["audio_queue"] = audio_queue[1:]
+
     if submitted and user_prompt.strip():
         user_prompt = user_prompt.strip()
         st.session_state["last_user_prompt"] = user_prompt
@@ -1306,88 +1715,47 @@ with tab_chat:
         # ユーザー発話を履歴へ（カテゴリ別）
         current_chat.append({"role": "user", "content": user_prompt})
 
-        system = current_buddy_prompt()
-        # 日時・時間帯・天気を追加（東京時間）
-        now = datetime.now(ZoneInfo("Asia/Tokyo"))
-        weekdays = ["月", "火", "水", "木", "金", "土", "日"]
-        today_str = now.strftime("%Y年%m月%d日") + f"（{weekdays[now.weekday()]}）"
-        time_str = now.strftime("%H:%M")
-        period = get_time_period(now.hour)
-        system = system + f"\n\n【現在の日時】{today_str} {time_str}（{period}）"
-        # 天気情報
-        weather = get_weather_meguro()
-        if weather:
-            system = system + f"\n【目黒区の天気】{weather['desc']}、気温{weather['temp']}℃（体感{weather['feel']}℃）、湿度{weather['humidity']}%"
-        # ニュース見出し（カテゴリに応じて）
-        current_cat = st.session_state.get("chat_category", "フリー")
-        if current_cat == "フリー":
-            news = get_news_summary(max_per_source=3)
-            if news:
-                system = system + f"\n\n【最新ニュース】\n{news}"
+        # --- 1対1モード ---
+        if chat_mode == "1対1":
+            system = build_system_prompt(chat_characters[0])
+            history = current_chat[-12:]
+            messages = [{"role": "system", "content": system}] + history
+
+            with st.spinner("考え中…"):
+                try:
+                    reply = call_lmstudio_chat_messages(
+                        base_url=base_url, model=model, messages=messages,
+                        temperature=temperature, max_tokens=max_tokens, timeout=180,
+                    )
+                    reply = normalize_model_output(reply)
+                except Exception as e:
+                    reply = f"ごめん、今ちょい失敗した。エラー: {e}"
+
+            current_chat.append({"role": "assistant", "content": reply})
+
+            if tts_enabled and reply:
+                with st.spinner("🔊 音声生成中…"):
+                    audio_data, audio_format, tts_error = generate_tts_for_char(reply, speaker_id)
+                    if audio_data:
+                        st.session_state["last_audio"] = audio_data
+                        st.session_state["last_audio_format"] = audio_format
+                    elif tts_error:
+                        st.session_state["tts_error"] = tts_error
+
+        # --- 複数人モード（3人/4人）---
         else:
-            cat_news = get_news_for_category(current_cat)
-            if cat_news:
-                system = system + f"\n\n【{current_cat}の最新ニュース】\n{cat_news}"
-                system = system + f"\n\n【会話の焦点】ユーザーは「{current_cat}」に関する話題に興味があります。この分野のニュースについて詳しく解説・議論してください。"
-        # TTS有効時かつクラウドモードのみ短い返答を促す（ローカルは制限なし）
-        if tts_enabled and tts_mode == "cloud":
-            system = system + "\n\n【重要】音声読み上げモードです。返答は簡潔に、3〜4文程度（150文字以内）でまとめてください。"
-        # キャラクター性格情報を追加
-        if speaker_personality:
-            system = system + f"\n\n【キャラクター設定】\nあなたは以下の性格で返答してください: {speaker_personality}"
-        # 一人称・二人称が設定されていれば追加
-        if speaker_calls_profile:
-            first_p = speaker_calls_profile.get("first_person")
-            second_p = speaker_calls_profile.get("second_person")
-            if first_p or second_p:
-                pronoun_text = "【話し方の設定】\n"
-                if first_p:
-                    pronoun_text += f"- 自分のことは「{first_p}」と呼んでください\n"
-                if second_p:
-                    pronoun_text += f"- 相手（ユーザー）のことは会話の流れで「{second_p}」と呼んでください（ただし挨拶や呼びかけには使わない。「こんにちは、{second_p}」はNG）\n"
-                system = system + "\n\n" + pronoun_text.strip()
-        history = current_chat[-12:]
-        messages = [{"role": "system", "content": system}] + history
-
-        with st.spinner("考え中…"):
-            try:
-                reply = call_lmstudio_chat_messages(
-                    base_url=base_url,
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    timeout=180,
-                )
-                reply = normalize_model_output(reply)
-            except Exception as e:
-                reply = f"ごめん、今ちょい失敗した。エラー: {e}"
-
-        current_chat.append({"role": "assistant", "content": reply})
-
-        # 音声読み上げ
-        if tts_enabled and reply:
-            with st.spinner("🔊 音声生成中…"):
-                # TTS用にURLを除去（表示テキストはそのまま）
-                tts_text = strip_urls_for_tts(reply)
-                if tts_mode == "local":
-                    # ローカルVOICEVOX（WAV形式、文字数制限なし）
-                    audio_data, tts_error = synthesize_voice_local_full(tts_text, speaker_id)
-                    audio_format = "wav"
-                else:
-                    # クラウドTTS Quest API（MP3形式）
-                    tts_key = get_tts_api_key()
-                    audio_data, tts_error = synthesize_voice_full(tts_text, speaker_id, api_key=tts_key)
-                    audio_format = "mp3"
-
-                if audio_data:
-                    st.session_state["last_audio"] = audio_data
-                    st.session_state["last_audio_format"] = audio_format
-                elif tts_error:
-                    st.session_state["tts_error"] = tts_error
+            run_multi_char_round(chat_characters, current_chat, base_url, model, temperature, max_tokens, tts_enabled)
 
         # 送信後は再描画して最新ログを表示
         st.rerun()
+
+    # 複数人モード: AI同士の会話継続ボタン
+    if chat_mode in ["3人", "4人"] and current_chat and len(chat_characters) > 1:
+        last_msg = current_chat[-1] if current_chat else {}
+        if last_msg.get("role") == "assistant" and last_msg.get("char_name"):
+            if st.button("🔄 会話を続ける", key="ai_continue"):
+                run_multi_char_round(chat_characters, current_chat, base_url, model, temperature, max_tokens, tts_enabled)
+                st.rerun()
 
     # ボタン群（新規会話・エクスポート）
     btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
@@ -1473,6 +1841,7 @@ with tab_radio:
 
 【キャラクター設定（これに従って話して）】
 {f'性格: {char_personality}' if char_personality else '性格: フレンドリーで親しみやすい'}
+{f'性別: {speaker_gender}' if speaker_gender else ''}
 {f'一人称: {first_p}' if first_p else ''}
 {f'相手の呼び方: {second_p}（ただし呼びかけには使わない）' if second_p else ''}"""
 
@@ -1743,6 +2112,12 @@ with tab_settings:
     st.caption("読み間違いを修正できます（例: 相棒→アイボウ）")
 
     if voicevox_connected:
+        # 入力クリア処理（前回登録成功時）
+        if st.session_state.get("_dict_clear"):
+            st.session_state["dict_surface"] = ""
+            st.session_state["dict_pronunciation"] = ""
+            st.session_state["_dict_clear"] = False
+
         # 単語登録
         dict_col1, dict_col2, dict_col3 = st.columns([2, 2, 1])
         with dict_col1:
@@ -1757,11 +2132,12 @@ with tab_settings:
                 if not s or not p:
                     st.warning("単語と読みを入力してください")
                 else:
+                    # ひらがな→カタカナ自動変換
+                    p = "".join(chr(ord(c) + 96) if "ぁ" <= c <= "ん" else c for c in p)
                     result = add_voicevox_dict_word(s, p)
                     if result:
                         st.success(f"「{s}」→「{p}」を登録しました")
-                        st.session_state["dict_surface"] = ""
-                        st.session_state["dict_pronunciation"] = ""
+                        st.session_state["_dict_clear"] = True
                         st.rerun()
                     else:
                         st.error("登録に失敗しました")
@@ -1773,7 +2149,8 @@ with tab_settings:
             for word_uuid, entry in user_dict.items():
                 dcol1, dcol2, dcol3 = st.columns([3, 3, 1])
                 with dcol1:
-                    st.markdown(entry["surface"])
+                    surface_hw = entry["surface"].translate(str.maketrans({chr(0xFF01 + i): chr(0x21 + i) for i in range(94)}))
+                    st.markdown(surface_hw)
                 with dcol2:
                     st.markdown(entry["pronunciation"])
                 with dcol3:
@@ -1801,9 +2178,36 @@ with tab_settings:
 
         edit_char_info = edit_speaker_data[edit_selected_char]
         current_personality = edit_char_info.get("personality") or ""
+        current_gender = edit_char_info.get("gender") or ""
+        current_icon = edit_char_info.get("icon") or ""
         current_calls = edit_char_info.get("calls_profile") or {}
         current_first = current_calls.get("first_person") or ""
         current_second = current_calls.get("second_person") or ""
+
+        # アイコン設定
+        icon_col1, icon_col2 = st.columns([1, 3])
+        with icon_col1:
+            if current_icon and os.path.exists(current_icon):
+                try:
+                    st.image(current_icon, width=80)
+                except Exception:
+                    st.caption("⚠️ アイコン読込エラー")
+            else:
+                st.caption("アイコン未設定")
+        with icon_col2:
+            uploaded_icon = st.file_uploader(
+                "アイコン画像",
+                type=["png", "jpg", "jpeg", "webp"],
+                key=f"icon_upload_{edit_selected_char}"
+            )
+            if uploaded_icon:
+                if st.button("📷 アイコンを保存", key=f"save_icon_{edit_selected_char}"):
+                    ext = uploaded_icon.name.rsplit(".", 1)[-1].lower()
+                    icon_path = save_speaker_icon(edit_selected_char, uploaded_icon.read(), ext)
+                    if icon_path:
+                        update_speaker_icon(edit_selected_char, icon_path)
+                        st.success("アイコンを保存しました")
+                        st.rerun()
 
         # 編集フォーム（キーをキャラ名で動的に変更して値を反映）
         edit_personality = st.text_area(
@@ -1812,6 +2216,16 @@ with tab_settings:
             height=100,
             placeholder="例: 明るく元気な性格。語尾に「〜のだ」をつける。",
             key=f"edit_personality_{edit_selected_char}"
+        )
+
+        gender_options = ["女性", "男性"]
+        gender_index = gender_options.index(current_gender) if current_gender in gender_options else 0
+        edit_gender = st.radio(
+            "性別",
+            gender_options,
+            index=gender_index,
+            horizontal=True,
+            key=f"edit_gender_{edit_selected_char}"
         )
 
         col_fp, col_sp = st.columns(2)
@@ -1830,12 +2244,34 @@ with tab_settings:
                 key=f"edit_second_person_{edit_selected_char}"
             )
 
+        # キャラ間の呼び方設定
+        current_nicknames = current_calls.get("char_nicknames") or {}
+        other_char_names = [n for n in edit_char_names if n != edit_selected_char]
+        if other_char_names:
+            st.caption("**他キャラへの呼び方**")
+            edit_nicknames = {}
+            nickname_cols = st.columns(min(len(other_char_names), 3))
+            for i, other_name in enumerate(other_char_names):
+                with nickname_cols[i % min(len(other_char_names), 3)]:
+                    edit_nicknames[other_name] = st.text_input(
+                        f"{other_name}",
+                        value=current_nicknames.get(other_name, ""),
+                        placeholder=f"例: {other_name[:3]}ちゃん",
+                        key=f"nickname_{edit_selected_char}_{other_name}"
+                    )
+            # 空文字を除去
+            edit_nicknames = {k: v.strip() for k, v in edit_nicknames.items() if v.strip()}
+        else:
+            edit_nicknames = {}
+
         if st.button("💾 キャラクター設定を保存", key="save_char_profile"):
             if update_speaker_profile(
                 edit_selected_char,
                 edit_personality,
                 edit_first_person,
-                edit_second_person
+                edit_second_person,
+                edit_gender,
+                char_nicknames=edit_nicknames
             ):
                 st.success(f"「{edit_selected_char}」の設定を保存しました")
                 st.rerun()

@@ -41,12 +41,26 @@
     "dormitory_profile": {
       "description": "高等部二年生。常に金欠。趣味は中二病妄想。誰にでも遠慮しないので、基本的にタメ口。",
       "personality": "誰にでも遠慮しない（基本タメ口）／中二病妄想好き／金欠",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/shikoku_metan/calls/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/shikoku_metan/calls/",
+      "gender": "女性"
     },
     "calls_profile": {
       "first_person": "わたくし",
       "second_person": "アンタ",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/shikoku_metan/calls/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/shikoku_metan/calls/",
+      "char_nicknames": {
+        "ずんだもん": "ずんだもん",
+        "春日部つむぎ": "つむぎさん",
+        "雨晴はう": "はうさん",
+        "春歌ナナ": "ナナさん",
+        "猫使アル": "アルさん",
+        "猫使ビィ": "ビィさん",
+        "ユーレイちゃん": "ユーレイちゃん",
+        "東北ずん子": "ずん子",
+        "東北きりたん": "きりたんさん",
+        "東北イタコ": "イタコさん",
+        "あんこもん": "あんこもん"
+      }
     }
   },
   {
@@ -101,7 +115,8 @@
     "dormitory_profile": {
       "description": "ずんだ餅の精。やや不幸属性が備わっており、ないがしろにされることもしばしば。",
       "personality": "やや不幸属性／ないがしろにされがち（ずんだ餅の精）/語尾に「のだ」をつける",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/zundamon/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/zundamon/",
+      "gender": "男性"
     },
     "calls_profile": {
       "first_person": "僕",
@@ -125,13 +140,29 @@
     },
     "dormitory_profile": {
       "description": "埼玉県内の高校に通うギャルの女の子。やんちゃに見えて実は真面目な一面もある。",
-      "personality": "埼玉出身の高校生。ギャルでやんちゃな性格だけど根は優しい",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kasukabe_tsumugi/"
+      "personality": "埼玉県春日部市出身の高校生。ギャルでやんちゃな性格だけど根は優しい。好きなものはカレーと動画配信サイトの回遊",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kasukabe_tsumugi/",
+      "gender": "女性",
+      "icon": "icons/春日部つむぎ.png"
     },
     "calls_profile": {
       "first_person": "あーし",
       "second_person": "きみ",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kasukabe_tsumugi/calls/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kasukabe_tsumugi/calls/",
+      "char_nicknames": {
+        "四国めたん": "めたん先輩",
+        "ずんだもん": "ずんだもん先輩",
+        "雨晴はう": "はうちゃん",
+        "波音リツ": "りっちゃん",
+        "櫻歌ミコ": "ミコっち",
+        "小夜/SAYO": "さよち",
+        "中国うさぎ": "うさぎちゃん",
+        "栗田まろん": "まろんちゃん",
+        "東北ずん子": "ずん子パイセン",
+        "東北きりたん": "きりたんパイセン",
+        "東北イタコ": "イタコパイセン",
+        "あんこもん": "あんこもんちゃん"
+      }
     }
   },
   {
@@ -150,13 +181,25 @@
     },
     "dormitory_profile": {
       "description": "現役看護師です！看護師のあれこれお伝えします！",
-      "personality": "現役看護師、健康に関する知識が豊富。性格はおっとりしている。",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/amehare_hau/"
+      "personality": "現役看護師、健康に関する知識が豊富。性格はおっとりしている。ラーメンと食べ歩きが好き。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/amehare_hau/",
+      "gender": "女性"
     },
     "calls_profile": {
       "first_person": "僕",
       "second_person": "あなた",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/amehare_hau/calls/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/amehare_hau/calls/",
+      "char_nicknames": {
+        "四国めたん": "めたんさん",
+        "ずんだもん": "ずんだもん",
+        "春日部つむぎ": "つむぎさん",
+        "波音リツ": "リツさん",
+        "冥鳴ひまり": "ひまりさん",
+        "WhiteCUL": "ゆきさん",
+        "中国うさぎ": "うさちゃん",
+        "あいえるたん": "あいえるたん",
+        "Voidoll": "ぼいどーるさん"
+      }
     }
   },
   {
@@ -180,8 +223,9 @@
     },
     "dormitory_profile": {
       "description": "地獄のような安価を踏み抜いて生まれた、2ch・VIP発のキャラクター。",
-      "personality": null,
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/namine_ritsu/calls/"
+      "personality": "クールな性格で馴れ合いが嫌い。韓国が好き。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/namine_ritsu/calls/",
+      "gender": "男性"
     },
     "calls_profile": {
       "first_person": "あたし",
@@ -221,7 +265,8 @@
     "dormitory_profile": {
       "description": "サッパリした青年。やや短気だが面倒見は良い。",
       "personality": "サッパリ／やや短気だが面倒見が良い",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kurono_takehiro/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kurono_takehiro/",
+      "gender": "男性"
     },
     "calls_profile": {
       "first_person": "俺",
@@ -266,7 +311,8 @@
     "dormitory_profile": {
       "description": "まっすぐで人懐っこい青年。愛嬌はあるものの少しおばか。",
       "personality": "まっすぐで人懐っこい／少しおばか",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/shirakami_kotarou/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/shirakami_kotarou/",
+      "gender": "男性"
     },
     "calls_profile": {
       "first_person": "おれ",
@@ -345,12 +391,13 @@
     },
     "dormitory_profile": {
       "description": "冥界から来た死神。可愛いものに目がない。",
-      "personality": "優しくて清楚（自称）",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/meimei_himari/"
+      "personality": "優しくて清楚（自称）冥界から来た死神。\n可愛いものに目がない。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/meimei_himari/",
+      "gender": "女性"
     },
     "calls_profile": {
       "first_person": "私",
-      "second_person": "君たち",
+      "second_person": "君",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/meimei_himari/calls/"
     }
   },
@@ -390,8 +437,9 @@
     },
     "dormitory_profile": {
       "description": "宇宙開拓用に開発されたアンドロイド。正式名称は「九州そらmk=II」（まーくつー）。",
-      "personality": null,
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kyushu_sora/"
+      "personality": "宇宙開拓用に開発されたアンドロイド。\n正式名称は「九州そらmk=II」（まーくつー）。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/kyushu_sora/",
+      "gender": "女性"
     },
     "calls_profile": {
       "first_person": "まーくつー",
@@ -440,8 +488,9 @@
     },
     "dormitory_profile": {
       "description": "小さい背丈で頑張る君を応援！福島県生まれのプラモ好き犬系ヲタ娘です。",
-      "personality": "応援してくれる犬系ヲタ娘（プラモ好き）",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/mochikosan/"
+      "personality": "福島県生まれの応援してくれる犬系ヲタ娘（プラモ好き）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/mochikosan/",
+      "gender": "女性"
     },
     "calls_profile": {
       "first_person": "私",
@@ -506,11 +555,12 @@
     "dormitory_profile": {
       "description": "CULの姉。風雪月花四姉妹の雪。冷静に見えるが、実は小心者のクールビューティー。",
       "personality": "クールビューティーだが小心者",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/white_cul/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/white_cul/",
+      "gender": "女性"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
+      "first_person": "わたし",
+      "second_person": "あなた",
       "source_url": null
     }
   },
@@ -640,8 +690,9 @@
     },
     "dormitory_profile": {
       "description": "ニホンオオカミの女の子。もうひとりのミコ（通称：第二ちゃん）がいる。",
-      "personality": "ガブデレ",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/ouka_miko/"
+      "personality": "ニホンオオカミの女の子。\n好きな相手には、つい噛み付いてしまうことも……？",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/ouka_miko/",
+      "gender": "女性"
     },
     "calls_profile": {
       "first_person": "ミコ",
@@ -665,8 +716,9 @@
     },
     "dormitory_profile": {
       "description": "おしゃべりがすきなねこの女の子。おいしいものを与えると懐きやすい。",
-      "personality": "おしゃべり好き／おいしいものに弱い",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/sayo/"
+      "personality": "おしゃべりがすきなねこの女の子。おいしいものを与えると懐きやすい。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/sayo/",
+      "gender": "女性"
     },
     "calls_profile": {
       "first_person": "小夜",
@@ -705,12 +757,13 @@
     },
     "dormitory_profile": {
       "description": "医者に作られたナース形ロボット。人格は少女と設定されている。",
-      "personality": null,
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/nurserobo_typet/"
+      "personality": "医者に作られたナース形ロボット。製造されてからまだ五ヶ月",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/nurserobo_typet/",
+      "gender": "女性"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
+      "first_person": "わたし",
+      "second_person": "あなた",
       "source_url": null
     }
   },
@@ -931,11 +984,12 @@
     "dormitory_profile": {
       "description": "巫女みこネットワークの一員で、日本各地で怪異の情報を集める。ぼそぼそしゃべるタイプの無口キャラ。",
       "personality": "ぼそぼそしゃべる無口キャラ（怪異情報収集）",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/chugoku_usagi/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/chugoku_usagi/",
+      "gender": "女性"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
+      "first_person": "わたし",
+      "second_person": "あなた",
       "source_url": null
     }
   },
@@ -1076,11 +1130,12 @@
     "dormitory_profile": {
       "description": "「#コンパス」を管理するAIロボ。人間の戦い方を監視/分析している。",
       "personality": "人間の戦い方を監視/分析している。",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/voidoll/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/voidoll/",
+      "gender": "女性"
     },
     "calls_profile": {
       "first_person": "ワタシ",
-      "second_person": "あなた",
+      "second_person": "アナタ",
       "source_url": null
     }
   },
@@ -1190,12 +1245,13 @@
     },
     "dormitory_profile": {
       "description": "記憶喪失のアンドロイドの青年。自分のことを人間だと思い込んでいるようだ。",
-      "personality": "穏やか／不思議くん",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/rito/"
+      "personality": "記憶喪失のアンドロイドの青年。自分のことを人間だと思い込んでいるようだ。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/rito/",
+      "gender": "男性"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
+      "first_person": "ボク",
+      "second_person": "キミ",
       "source_url": null
     }
   },
@@ -1260,12 +1316,13 @@
     },
     "dormitory_profile": {
       "description": "ユーステラのメインヒロイン『ユーレイちゃん』こと雛菊ルミ。",
-      "personality": null,
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/yureichan/"
+      "personality": "自分の年齢すら覚えてない記憶の薄れた地縛霊。\n添い寝が好きで人の目に付かないアパートに住み着いている。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/yureichan/",
+      "gender": "女性"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
+      "first_person": "私",
+      "second_person": "きみ",
       "source_url": null
     }
   },
@@ -1380,12 +1437,13 @@
     },
     "dormitory_profile": {
       "description": "ずんだもんをライバル視しており、「ずんだもん？そんなやつ、知らないもん」とツンツンしている。",
-      "personality": "ツンツン（ずんだもんをライバル視）",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/ankomon/"
+      "personality": "いつもツンツンしている。語尾に〇〇だもんとつける。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/ankomon/",
+      "gender": "女性"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
+      "first_person": "あんこもん",
+      "second_person": "おまえ",
       "source_url": null
     }
   }
