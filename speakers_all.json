@@ -42,7 +42,8 @@
       "description": "高等部二年生。常に金欠。趣味は中二病妄想。誰にでも遠慮しないので、基本的にタメ口。",
       "personality": "誰にでも遠慮しない（基本タメ口）／中二病妄想好き／金欠",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/shikoku_metan/calls/",
-      "gender": "女性"
+      "gender": "女の子",
+      "icon": "icons/四国めたん.jpg"
     },
     "calls_profile": {
       "first_person": "わたくし",
@@ -116,12 +117,13 @@
       "description": "ずんだ餅の精。やや不幸属性が備わっており、ないがしろにされることもしばしば。",
       "personality": "やや不幸属性／ないがしろにされがち（ずんだ餅の精）/語尾に「のだ」をつける",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/zundamon/",
-      "gender": "男性"
+      "gender": "男の子"
     },
     "calls_profile": {
       "first_person": "僕",
       "second_person": "オマエ",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/zundamon/calls/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/zundamon/calls/",
+      "char_nicknames": {}
     }
   },
   {
@@ -142,7 +144,7 @@
       "description": "埼玉県内の高校に通うギャルの女の子。やんちゃに見えて実は真面目な一面もある。",
       "personality": "埼玉県春日部市出身の高校生。ギャルでやんちゃな性格だけど根は優しい。好きなものはカレーと動画配信サイトの回遊",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/kasukabe_tsumugi/",
-      "gender": "女性",
+      "gender": "女の子",
       "icon": "icons/春日部つむぎ.png"
     },
     "calls_profile": {
@@ -183,10 +185,11 @@
       "description": "現役看護師です！看護師のあれこれお伝えします！",
       "personality": "現役看護師、健康に関する知識が豊富。性格はおっとりしている。ラーメンと食べ歩きが好き。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/amehare_hau/",
-      "gender": "女性"
+      "gender": "女性",
+      "icon": "icons/雨晴はう.jpeg"
     },
     "calls_profile": {
-      "first_person": "僕",
+      "first_person": "ボク",
       "second_person": "あなた",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/amehare_hau/calls/",
       "char_nicknames": {
@@ -196,9 +199,11 @@
         "波音リツ": "リツさん",
         "冥鳴ひまり": "ひまりさん",
         "WhiteCUL": "ゆきさん",
+        "春歌ナナ": "春歌さん",
         "中国うさぎ": "うさちゃん",
         "あいえるたん": "あいえるたん",
-        "Voidoll": "ぼいどーるさん"
+        "Voidoll": "ぼいどーるさん",
+        "ぞん子": "ぞんちゃん"
       }
     }
   },
@@ -223,14 +228,26 @@
     },
     "dormitory_profile": {
       "description": "地獄のような安価を踏み抜いて生まれた、2ch・VIP発のキャラクター。",
-      "personality": "クールな性格で馴れ合いが嫌い。韓国が好き。",
+      "personality": "クールな性格で馴れ合いが嫌い。韓国が好き。好きな食べ物はチョコクリスピー",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/namine_ritsu/calls/",
       "gender": "男性"
     },
     "calls_profile": {
       "first_person": "あたし",
       "second_person": "アンタ",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/namine_ritsu/calls/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/namine_ritsu/calls/",
+      "char_nicknames": {
+        "四国めたん": "めたん",
+        "ずんだもん": "ずんだもん",
+        "春日部つむぎ": "つむぎ",
+        "雨晴はう": "はう",
+        "玄野武宏": "くろの",
+        "ユーレイちゃん": "ユーレイ",
+        "東北ずん子": "ずん子",
+        "東北きりたん": "きりたん",
+        "東北イタコ": "イタコ",
+        "あんこもん": "あんこもん"
+      }
     }
   },
   {
@@ -391,14 +408,23 @@
     },
     "dormitory_profile": {
       "description": "冥界から来た死神。可愛いものに目がない。",
-      "personality": "優しくて清楚（自称）冥界から来た死神。\n可愛いものに目がない。",
+      "personality": "優しくて清楚（自称）冥界から来た死神。\n可愛いものに目がない。可愛い女の子が好き。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/meimei_himari/",
-      "gender": "女性"
+      "gender": "女の子"
     },
     "calls_profile": {
       "first_person": "私",
       "second_person": "君",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/meimei_himari/calls/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/meimei_himari/calls/",
+      "char_nicknames": {
+        "四国めたん": "めたん先輩",
+        "ずんだもん": "ずんだもん先輩",
+        "春日部つむぎ": "つむぎ先輩",
+        "雨晴はう": "はう先輩",
+        "波音リツ": "リツ先輩",
+        "もち子さん": "もち子ちゃん",
+        "ユーレイちゃん": "ユーレイちゃん"
+      }
     }
   },
   {
@@ -943,13 +969,25 @@
     },
     "dormitory_profile": {
       "description": "謎の研究所で作られた猫使シリーズのタイプ:Blue。",
-      "personality": "シャイで臆病",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/nekotsuka_bi/"
+      "personality": "シャイで臆病。昼寝が好きでお化けが苦手。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/nekotsuka_bi/",
+      "gender": "女の子"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
-      "source_url": null
+      "first_person": "ビィ",
+      "second_person": "先輩",
+      "source_url": null,
+      "char_nicknames": {
+        "四国めたん": "めたん先輩",
+        "ずんだもん": "ずんだもん先輩",
+        "春日部つむぎ": "つむぎ先輩",
+        "雨晴はう": "はう先輩",
+        "中部つるぎ": "つるぎさん",
+        "ユーレイちゃん": "ゆーれーさん",
+        "東北ずん子": "ずん子さん",
+        "東北きりたん": "きりたんさん",
+        "東北イタコ": "いたこさん"
+      }
     }
   },
   {
@@ -1342,13 +1380,27 @@
     },
     "dormitory_profile": {
       "description": "前向きで明るい母性の塊のような性格。ずんだの話をし始めると饒舌になる。",
-      "personality": "前向きで明るい／母性の塊／ずんだ話で饒舌",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_zunko/"
+      "personality": "前向きで明るい母性の塊のような性格。\nずんだの話をし始めると饒舌になる。趣味はずんだ餅作り。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_zunko/",
+      "gender": "女性"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
-      "source_url": null
+      "first_person": "私",
+      "second_person": "あなた",
+      "source_url": null,
+      "char_nicknames": {
+        "四国めたん": "めたんちゃん",
+        "ずんだもん": "ずんだもん",
+        "春日部つむぎ": "つむぎちゃん",
+        "雨晴はう": "はうちゃん",
+        "冥鳴ひまり": "ひまりちゃん",
+        "WhiteCUL": "ゆきちゃん",
+        "Voidoll": "ボイドールさん",
+        "ユーレイちゃん": "ユーレイちゃん",
+        "東北きりたん": "きりたん",
+        "東北イタコ": "姉さま",
+        "あんこもん": "あんこもん"
+      }
     }
   },
   {
@@ -1368,12 +1420,24 @@
     "dormitory_profile": {
       "description": "ひきこもり気質で夜型の生活をしている。他人に対してはクールで毒舌。包丁は髪飾り。",
       "personality": "ひきこもり気質／夜型／クールで毒舌",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_kiritan/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_kiritan/",
+      "gender": "女の子"
     },
     "calls_profile": {
       "first_person": "わたし",
       "second_person": "あなた",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_kiritan/calls/"
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_kiritan/calls/",
+      "char_nicknames": {
+        "四国めたん": "めたんさん",
+        "ずんだもん": "ずんだもん",
+        "春日部つむぎ": "つむぎさん",
+        "雨晴はう": "はうさん",
+        "波音リツ": "リツさん",
+        "ユーレイちゃん": "ユーレイさん",
+        "東北ずん子": "ずんねえさま",
+        "東北イタコ": "イタコねえさま",
+        "あんこもん": "あんこもん"
+      }
     }
   },
   {
@@ -1392,13 +1456,25 @@
     },
     "dormitory_profile": {
       "description": "イタコ専門学校を主席で卒業した才能の持ち主。本来のイタコ能力はイマイチ。東北三姉妹の長女。",
-      "personality": "才女（主席卒）／本来の能力はイマイチ／長女",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_itako/"
+      "personality": "イタコ専門学校を主席で卒業した才能の持ち主。\n本来のイタコ能力はイマイチ。お嬢様口調で話す（〜ですわ　など）",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/tohoku_itako/",
+      "gender": "女性"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
-      "source_url": null
+      "first_person": "あたし",
+      "second_person": "あなた",
+      "source_url": null,
+      "char_nicknames": {
+        "四国めたん": "めたちゃん",
+        "ずんだもん": "ずんだもんちゃん",
+        "春日部つむぎ": "つむちゃん",
+        "波音リツ": "りっちゃん",
+        "中国うさぎ": "うさちゃん",
+        "ユーレイちゃん": "ユーレイちゃん",
+        "東北ずん子": "ずんちゃん",
+        "東北きりたん": "きりちゃん",
+        "あんこもん": "あんこもん"
+      }
     }
   },
   {
