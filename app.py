@@ -374,8 +374,12 @@ def split_text_for_tts(text: str, max_len: int = 200) -> list:
     return [c for c in chunks if c]
 
 
-def build_talk_target_instruction(other_char_names: list) -> str:
+def build_talk_target_instruction(other_char_names: list, include_user: bool = True) -> str:
     """話しかけ先の指示を人数に応じて生成"""
+    if not include_user:
+        if other_char_names:
+            return "ユーザーには話しかけず、" + "と".join(other_char_names) + "に向けて話すこと。"
+        return ""
     targets = ["ユーザー"] + other_char_names
     pct = round(100 / len(targets))
     parts = [f"{t}に話しかける({pct}%)" for t in targets]
@@ -1268,6 +1272,11 @@ with tab_chat:
                         nn_lines += f"- {on}のことは必ず「{nn}」と呼ぶこと\n"
                 prefix = "新しいニュースが入ってきたよ！\n\n" if fingerprint_changed else ""
                 base_instruction = role_instruction or f"友達に話題をふるように、以下の最新ニュース{news_count}つを紹介して。"
+                comment_rule = (
+                    "- ニュースの紹介と感想は1セットで完結させること。同じニュースに対して感想を繰り返さないこと"
+                    if news_count == 1 else
+                    "- 各ニュースに対してキャラクターとしての感想を自然に入れる。ただし毎回同じパターン（「このニュースを見て〜は…」等）の定型文にしない。感想の入れ方を毎回変えること"
+                )
                 return f"""{prefix}{base_instruction}
 
 【ニュース】
@@ -1276,7 +1285,7 @@ with tab_chat:
 【必須ルール】
 - 箇条書きは絶対に使わない
 - 各ニュースを紹介した後、必ず参照元URLを「詳しくはこちら→ URL」の形で記載
-- 各ニュースに対してキャラクターとしての感想を自然に入れる。ただし毎回同じパターン（「このニュースを見て〜は…」等）の定型文にしない。感想の入れ方を毎回変えること
+{comment_rule}
 - 冒頭で一人称を名乗らない。いきなり話題に入る（例:「ねえねえ、こんなニュースあったんだけど」）
 - 全体的なトレンドのまとめは不要
 - 「Note:」「注:」等のメタコメントや補足説明は絶対に含めない。純粋に会話文だけを出力すること
@@ -1351,10 +1360,9 @@ with tab_chat:
                     persona_block = f"""あなたは「{char['name']}」です。
 {f'- 一人称は「{c_fp}」を使うこと。' if c_fp else ''}
 {f'- 性別: {c_gender}' if c_gender else ''}
-{f'- ユーザーへの呼びかけは「{c_sp}」を使うこと。他のキャラの二人称は絶対に使わないこと。' if c_sp else ''}
 {nickname_lines}{f'- 性格: {c_personality}' if c_personality else ''}
 - 他のキャラの口調・一人称・二人称・話し方を絶対に真似しないこと。自分独自の視点と言葉で話すこと。
-- {build_talk_target_instruction([p['name'] for p in prev_replies])}"""
+- {build_talk_target_instruction([p['name'] for p in prev_replies], include_user=False)}"""
 
                     if idx == 0:
                         # キャラA: ニュース紹介プロンプト（従来通り）
@@ -1416,12 +1424,14 @@ with tab_chat:
             st.session_state["_news_generating"] = False
             st.rerun()
 
-        # 2回目以降の訪問: 保存済み音声があれば再生
+        # 2回目以降の訪問: カテゴリ切り替え時のみ1回だけ再生
         elif tts_enabled and "news_intro_audio" in st.session_state:
             stored = st.session_state["news_intro_audio"].get(selected_category)
-            if stored and not st.session_state.get("last_audio"):
+            last_played_cat = st.session_state.get("_last_played_intro_cat", "")
+            if stored and last_played_cat != selected_category:
                 st.session_state["last_audio"] = stored["data"]
                 st.session_state["last_audio_format"] = stored["format"]
+                st.session_state["_last_played_intro_cat"] = selected_category
 
         st.caption(f"💡 {selected_category}に関する話題でチャットします")
     else:
@@ -1703,11 +1713,10 @@ with tab_chat:
                 if nn:
                     nickname_lines += f"- {on}のことは必ず「{nn}」と呼ぶこと。「{on}」とフルネームで呼ばないこと。\n"
             # ペルソナ厳守指示（キャラA含む全員に付与）
-            extra = f"""【会話の状況】あなたは{','.join(other_names)}とユーザーの会話に参加しています。直前の発言を踏まえて会話を続けてください。既に話した内容を繰り返さず、新しい話題や視点を加えてください。
-- {build_talk_target_instruction(other_names)}
+            extra = f"""【会話の状況】あなたは{','.join(other_names)}との会話に参加しています。直前の発言を踏まえて会話を続けてください。既に話した内容を繰り返さず、新しい話題や視点を加えてください。
+- {build_talk_target_instruction(other_names, include_user=False)}
 【絶対厳守】あなたは「{char_name}」です。自分の返答だけを出力すること。他のキャラの返答は絶対に書かないこと。【キャラ名】のような表記も使わないこと。
 {f'- 一人称は必ず「{c_fp}」を使うこと。他のキャラの一人称は絶対に使わないこと。' if c_fp else ''}
-{f'- ユーザーへの呼びかけは「{c_sp}」を使うこと。' if c_sp else ''}
 【呼び名ルール（厳守）】
 {nickname_lines if nickname_lines else ''}- 他のキャラの口調・一人称・二人称を絶対に真似しないでください。自分のキャラクター設定だけに忠実に話してください。"""
 
@@ -1849,6 +1858,10 @@ with tab_radio:
     if "radio_audio" not in st.session_state:
         st.session_state["radio_audio"] = None
         st.session_state["radio_audio_format"] = None
+    if "radio_audio_play_count" not in st.session_state:
+        st.session_state["radio_audio_play_count"] = 0
+    if "radio_audio_played" not in st.session_state:
+        st.session_state["radio_audio_played"] = False
 
     if radio_categories and st.button("▶️ ラジオ開始", type="primary"):
         # 全カテゴリのニュースをまとめる
@@ -2080,6 +2093,8 @@ DJ（{dj['name']}）がニュースを紹介しました。その中から気に
                     else:
                         st.session_state["radio_audio"] = wav_parts[0]
                         st.session_state["radio_audio_format"] = "wav" if tts_mode == "local" else "mp3"
+                    st.session_state["radio_audio_play_count"] = st.session_state.get("radio_audio_play_count", 0) + 1
+                    st.session_state["radio_audio_played"] = False
 
         st.rerun()
 
@@ -2087,12 +2102,23 @@ DJ（{dj['name']}）がニュースを紹介しました。その中から気に
     if st.session_state["radio_script"]:
         st.markdown(st.session_state["radio_script"])
 
-    # 音声再生
-    if st.session_state.get("radio_audio"):
+    # 音声再生（未再生フラグがTrueの場合のみ1回再生）
+    if st.session_state.get("radio_audio") and not st.session_state.get("radio_audio_played", True):
+        st.session_state["radio_audio_played"] = True
+        play_count = st.session_state["radio_audio_play_count"]
         audio_data = st.session_state["radio_audio"]
         audio_format = st.session_state.get("radio_audio_format", "wav")
-        mime_type = "audio/wav" if audio_format == "wav" else "audio/mp3"
-        st.audio(audio_data, format=mime_type, autoplay=True)
+        mime = "audio/wav" if audio_format == "wav" else "audio/mp3"
+        b64 = base64.b64encode(audio_data).decode()
+        js_code = f"""
+        (function() {{
+            var w = window.parent || window;
+            var audio = new w.Audio('data:{mime};base64,{b64}');
+            audio.play();
+            return 'ok';
+        }})()
+        """
+        streamlit_js_eval(js_expressions=js_code, key=f"radio_play_{play_count}")
 
 
 # =============================

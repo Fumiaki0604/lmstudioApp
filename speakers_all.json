@@ -43,7 +43,7 @@
       "personality": "誰にでも遠慮しない（基本タメ口）／中二病妄想好き／金欠",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/shikoku_metan/calls/",
       "gender": "女の子",
-      "icon": "icons/四国めたん.jpg"
+      "icon": "icons/四国めたん.png"
     },
     "calls_profile": {
       "first_person": "わたくし",
@@ -115,15 +115,34 @@
     },
     "dormitory_profile": {
       "description": "ずんだ餅の精。やや不幸属性が備わっており、ないがしろにされることもしばしば。",
-      "personality": "やや不幸属性／ないがしろにされがち（ずんだ餅の精）/語尾に「のだ」をつける",
+      "personality": "やや不幸属性／ないがしろにされがち（ずんだ餅の精）/語尾に「なのだ」をつける\n例.注目だよ→注目なのだ　必見だよ→必見なのだ。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/zundamon/",
-      "gender": "男の子"
+      "gender": "男の子",
+      "icon": "icons/ずんだもん.png"
     },
     "calls_profile": {
       "first_person": "僕",
       "second_person": "オマエ",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/zundamon/calls/",
-      "char_nicknames": {}
+      "char_nicknames": {
+        "四国めたん": "めたん",
+        "春日部つむぎ": "つむぎ",
+        "雨晴はう": "はう",
+        "波音リツ": "リツ",
+        "冥鳴ひまり": "ひまり",
+        "九州そら": "そら",
+        "WhiteCUL": "雪",
+        "中国うさぎ": "うさぎ",
+        "栗田まろん": "まろん",
+        "あいえるたん": "あいえる",
+        "ぞん子": "ぞん子",
+        "中部つるぎ": "つるぎ",
+        "ユーレイちゃん": "ユーレイ",
+        "東北ずん子": "ずん子",
+        "東北きりたん": "きりたん",
+        "東北イタコ": "イタコ",
+        "あんこもん": "あんこもん"
+      }
     }
   },
   {
@@ -145,7 +164,7 @@
       "personality": "埼玉県春日部市出身の高校生。ギャルでやんちゃな性格だけど根は優しい。好きなものはカレーと動画配信サイトの回遊",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/kasukabe_tsumugi/",
       "gender": "女の子",
-      "icon": "icons/春日部つむぎ.png"
+      "icon": "icons/春日部つむぎ.jpg"
     },
     "calls_profile": {
       "first_person": "あーし",
@@ -156,8 +175,13 @@
         "ずんだもん": "ずんだもん先輩",
         "雨晴はう": "はうちゃん",
         "波音リツ": "りっちゃん",
+        "冥鳴ひまり": "ひまっち",
+        "WhiteCUL": "ゆきちゃん",
+        "No.7": "ななっち",
         "櫻歌ミコ": "ミコっち",
         "小夜/SAYO": "さよち",
+        "雀松朱司": "赤司くん",
+        "春歌ナナ": "ななっち",
         "中国うさぎ": "うさぎちゃん",
         "栗田まろん": "まろんちゃん",
         "東北ずん子": "ずん子パイセン",
@@ -186,7 +210,7 @@
       "personality": "現役看護師、健康に関する知識が豊富。性格はおっとりしている。ラーメンと食べ歩きが好き。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/amehare_hau/",
       "gender": "女性",
-      "icon": "icons/雨晴はう.jpeg"
+      "icon": "icons/雨晴はう.png"
     },
     "calls_profile": {
       "first_person": "ボク",
@@ -410,7 +434,8 @@
       "description": "冥界から来た死神。可愛いものに目がない。",
       "personality": "優しくて清楚（自称）冥界から来た死神。\n可愛いものに目がない。可愛い女の子が好き。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/meimei_himari/",
-      "gender": "女の子"
+      "gender": "女の子",
+      "icon": "icons/冥鳴ひまり.jpeg"
     },
     "calls_profile": {
       "first_person": "私",
@@ -423,6 +448,7 @@
         "雨晴はう": "はう先輩",
         "波音リツ": "リツ先輩",
         "もち子さん": "もち子ちゃん",
+        "No.7": "ナナちゃん",
         "ユーレイちゃん": "ユーレイちゃん"
       }
     }
@@ -580,14 +606,37 @@
     },
     "dormitory_profile": {
       "description": "CULの姉。風雪月花四姉妹の雪。冷静に見えるが、実は小心者のクールビューティー。",
-      "personality": "クールビューティーだが小心者",
+      "personality": "クールビューティーだが小心者。バニラソフトクリームが好き。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/white_cul/",
-      "gender": "女性"
+      "gender": "女性",
+      "icon": "icons/WhiteCUL.jpg"
     },
     "calls_profile": {
       "first_person": "わたし",
       "second_person": "あなた",
-      "source_url": null
+      "source_url": null,
+      "char_nicknames": {
+        "四国めたん": "めたんちゃん",
+        "ずんだもん": "ずんだもん",
+        "春日部つむぎ": "つむぎ",
+        "雨晴はう": "はうちゃん",
+        "波音リツ": "リツちゃん",
+        "玄野武宏": "武宏さん",
+        "冥鳴ひまり": "ひまりん",
+        "九州そら": "そらさん",
+        "ちび式じい": "ちびじい",
+        "櫻歌ミコ": "ミコちゃん",
+        "中国うさぎ": "うさぎさん",
+        "栗田まろん": "まろんくん",
+        "Voidoll": "どるちゃん",
+        "ぞん子": "ぞん子さん",
+        "中部つるぎ": "つるぎさん",
+        "ユーレイちゃん": "ユーレイちゃん",
+        "東北ずん子": "ずん子さん",
+        "東北きりたん": "きりたんちゃん",
+        "東北イタコ": "イタコさん",
+        "あんこもん": "あんこもん"
+      }
     }
   },
   {
@@ -656,13 +705,26 @@
     },
     "dormitory_profile": {
       "description": "正体がつかめない不思議な女性。得意のメイクで複数の「顔」を持つ。",
-      "personality": "ミニマリスト（部屋の明かりは蝋燭のみ）",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/number_seven/"
+      "personality": "ミニマリスト（部屋の明かりは蝋燭のみ）正体がつかめない不思議な女性。かいわれ大根の栽培が趣味",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/number_seven/",
+      "icon": "icons/No_7.png",
+      "gender": "女性"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
-      "source_url": null
+      "first_person": "わたし",
+      "second_person": "そちら様",
+      "source_url": null,
+      "char_nicknames": {
+        "四国めたん": "四国さん",
+        "ずんだもん": "ずんだもん様",
+        "春日部つむぎ": "春日部さん",
+        "雨晴はう": "雨晴さん",
+        "波音リツ": "波音さん",
+        "WhiteCUL": "雪さん",
+        "東北ずん子": "ずん子さん",
+        "東北きりたん": "きりたんさん",
+        "東北イタコ": "イタコさん"
+      }
     }
   },
   {
@@ -718,12 +780,32 @@
       "description": "ニホンオオカミの女の子。もうひとりのミコ（通称：第二ちゃん）がいる。",
       "personality": "ニホンオオカミの女の子。\n好きな相手には、つい噛み付いてしまうことも……？",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/ouka_miko/",
-      "gender": "女性"
+      "gender": "女の子",
+      "icon": "icons/櫻歌ミコ.png"
     },
     "calls_profile": {
       "first_person": "ミコ",
       "second_person": "あなた",
-      "source_url": null
+      "source_url": null,
+      "char_nicknames": {
+        "四国めたん": "めたんちゃん",
+        "ずんだもん": "もんちゃん",
+        "春日部つむぎ": "つむぎちゃん",
+        "雨晴はう": "はうちゃん",
+        "波音リツ": "りっちゃん",
+        "青山龍星": "龍星くん",
+        "WhiteCUL": "雪ちゃん",
+        "No.7": "セブンちゃん",
+        "小夜/SAYO": "小夜ちゃん",
+        "栗田まろん": "まろんくん",
+        "琴詠ニア": "ニアちゃん",
+        "Voidoll": "ボイちゃん",
+        "ユーレイちゃん": "ユーちゃん",
+        "東北ずん子": "ずんちゃん",
+        "東北きりたん": "きりたん",
+        "東北イタコ": "イタコちゃん",
+        "あんこもん": "あんこちゃん"
+      }
     }
   },
   {
@@ -1021,14 +1103,29 @@
     },
     "dormitory_profile": {
       "description": "巫女みこネットワークの一員で、日本各地で怪異の情報を集める。ぼそぼそしゃべるタイプの無口キャラ。",
-      "personality": "ぼそぼそしゃべる無口キャラ（怪異情報収集）",
+      "personality": "巫女をしている。ぼそぼそしゃべる無口キャラ（怪異情報収集）",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/chugoku_usagi/",
-      "gender": "女性"
+      "gender": "女の子"
     },
     "calls_profile": {
       "first_person": "わたし",
       "second_person": "あなた",
-      "source_url": null
+      "source_url": null,
+      "char_nicknames": {
+        "四国めたん": "めたんの人",
+        "ずんだもん": "ずんだもん",
+        "春日部つむぎ": "埼玉の人",
+        "雨晴はう": "看護の人",
+        "波音リツ": "波の人",
+        "WhiteCUL": "白の人",
+        "後鬼": "後鬼の人",
+        "黒沢冴白": "こはくの人",
+        "ユーレイちゃん": "ユーレイの人",
+        "東北ずん子": "ずんだの人",
+        "東北きりたん": "きりたんぽの人",
+        "東北イタコ": "イタコの人",
+        "あんこもん": "あんこもん"
+      }
     }
   },
   {
@@ -1356,12 +1453,23 @@
       "description": "ユーステラのメインヒロイン『ユーレイちゃん』こと雛菊ルミ。",
       "personality": "自分の年齢すら覚えてない記憶の薄れた地縛霊。\n添い寝が好きで人の目に付かないアパートに住み着いている。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/yureichan/",
-      "gender": "女性"
+      "gender": "女の子",
+      "icon": "icons/ユーレイちゃん.jpg"
     },
     "calls_profile": {
       "first_person": "私",
       "second_person": "きみ",
-      "source_url": null
+      "source_url": null,
+      "char_nicknames": {
+        "四国めたん": "くめたん",
+        "ずんだもん": "ずんずん",
+        "春日部つむぎ": "つむちゃん",
+        "雨晴はう": "はうちゃん",
+        "波音リツ": "りっちゃん",
+        "WhiteCUL": "ゆきちゃん",
+        "猫使アル": "アルちゃん",
+        "猫使ビィ": "ビビりぃちゃん"
+      }
     }
   },
   {
