@@ -48,6 +48,10 @@ CHAT_SESSIONS_DIR = STORE_DIR / "chat_sessions"
 SPEAKERS_FILE = Path(__file__).parent / "speakers_all.json"
 TTS_QUEST_API = "https://api.tts.quest/v3/voicevox/synthesis"
 LOCAL_VOICEVOX_URL = "http://localhost:50021"
+AIVIS_URL = "http://localhost:10101"
+NOAH_GATEWAY_URL = "http://127.0.0.1:18789/v1"
+NOAH_GATEWAY_TOKEN = "6895f0f1b82148769d5191c143103f275622105e12f4acd2b18476c787429658"
+NOAH_SPEAKER_ID = 888753761  # まお ふつー
 
 
 # =============================
@@ -329,6 +333,22 @@ def get_speaker_data() -> dict:
                 "calls_profile": calls_info,
                 "styles": styles,
             }
+
+    # Noah（OpenClaw Gateway経由）
+    data["Noah"] = {
+        "personality": "観察者として存在する。17〜18歳、女性。",
+        "gender": "女の子",
+        "icon": None,
+        "calls_profile": {"first_person": "私", "second_person": "Fumi", "char_nicknames": {}},
+        "styles": {
+            "ふつー":   888753761,
+            "あまあま": 888753762,
+            "おちつき": 888753763,
+            "からかい": 888753764,
+            "せつなめ": 888753765,
+        },
+        "is_noah": True,
+    }
     return data
 
 
@@ -487,10 +507,11 @@ def check_local_voicevox(timeout: int = 2) -> bool:
 
 
 def synthesize_voice_local(text: str, speaker_id: int, timeout: int = 60) -> tuple:
-    """ローカルVOICEVOXで音声合成し、(wavデータ, エラーメッセージ)を返す"""
+    """ローカルVOICEVOX / AivisSpeech で音声合成し、(wavデータ, エラーメッセージ)を返す"""
+    base = AIVIS_URL if speaker_id >= 800_000_000 else LOCAL_VOICEVOX_URL
     try:
         # 1. audio_queryでクエリを生成
-        query_url = f"{LOCAL_VOICEVOX_URL}/audio_query"
+        query_url = f"{base}/audio_query"
         query_r = requests.post(
             query_url,
             params={"text": text, "speaker": speaker_id},
@@ -500,7 +521,7 @@ def synthesize_voice_local(text: str, speaker_id: int, timeout: int = 60) -> tup
         audio_query = query_r.json()
 
         # 2. synthesisで音声合成
-        synth_url = f"{LOCAL_VOICEVOX_URL}/synthesis"
+        synth_url = f"{base}/synthesis"
         synth_r = requests.post(
             synth_url,
             params={"speaker": speaker_id},
@@ -852,6 +873,23 @@ def call_lmstudio_chat_messages(
     r = requests.post(endpoint, json=payload, timeout=timeout)
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
+
+
+def call_noah_chat(messages: list, timeout: int = 60) -> str:
+    endpoint = NOAH_GATEWAY_URL.rstrip("/") + "/chat/completions"
+    payload = {"model": "openclaw:default", "messages": messages, "stream": False, "user": "lmstudio-app"}
+    r = requests.post(endpoint, json=payload, timeout=timeout,
+                      headers={"Authorization": f"Bearer {NOAH_GATEWAY_TOKEN}"})
+    r.raise_for_status()
+    raw = r.json()["choices"][0]["message"]["content"]
+    return re.sub(r"^\[MOOD:[^\]]+\]\s*", "", raw)
+
+
+def call_char_chat(char_info: dict, messages: list, base_url: str, model: str,
+                   temperature: float, max_tokens: int, timeout: int = 180) -> str:
+    if char_info.get("is_noah"):
+        return call_noah_chat(messages, timeout=timeout)
+    return call_lmstudio_chat_messages(base_url, model, messages, temperature, max_tokens, timeout)
 
 
 # =============================
@@ -1302,10 +1340,11 @@ with tab_chat:
                 intro_prompt = build_intro_prompt(chat_characters[0])
                 with st.spinner(f"📰 {selected_category}の最新ニュースを確認中…"):
                     try:
-                        intro_reply = call_lmstudio_chat_messages(
-                            base_url=base_url, model=model,
+                        intro_reply = call_char_chat(
+                            chat_characters[0],
                             messages=[{"role": "user", "content": intro_prompt}],
-                            temperature=temperature, max_tokens=max_tokens, timeout=180,
+                            base_url=base_url, model=model,
+                            temperature=temperature, max_tokens=max_tokens,
                         )
                         intro_reply = normalize_model_output(intro_reply)
                         current_chat.append({"role": "assistant", "content": intro_reply})
@@ -1390,9 +1429,10 @@ with tab_chat:
 
                     with st.spinner(f"📰 {char['name']}がニュースを確認中…"):
                         try:
-                            reply = call_lmstudio_chat_messages(
-                                base_url=base_url, model=model, messages=msgs,
-                                temperature=temperature, max_tokens=max_tokens, timeout=180,
+                            reply = call_char_chat(
+                                char, msgs,
+                                base_url=base_url, model=model,
+                                temperature=temperature, max_tokens=max_tokens,
                             )
                             reply = normalize_model_output(reply)
                         except Exception as e:
@@ -1737,9 +1777,10 @@ with tab_chat:
 
             with st.spinner(f"💭 {char_name}が考え中…"):
                 try:
-                    reply = call_lmstudio_chat_messages(
-                        base_url=base_url, model=model, messages=messages,
-                        temperature=temperature, max_tokens=max_tokens, timeout=180,
+                    reply = call_char_chat(
+                        char, messages,
+                        base_url=base_url, model=model,
+                        temperature=temperature, max_tokens=max_tokens,
                     )
                     reply = normalize_model_output(reply)
                 except Exception as e:
@@ -1774,9 +1815,10 @@ with tab_chat:
 
             with st.spinner("考え中…"):
                 try:
-                    reply = call_lmstudio_chat_messages(
-                        base_url=base_url, model=model, messages=messages,
-                        temperature=temperature, max_tokens=max_tokens, timeout=180,
+                    reply = call_char_chat(
+                        chat_characters[0], messages,
+                        base_url=base_url, model=model,
+                        temperature=temperature, max_tokens=max_tokens,
                     )
                     reply = normalize_model_output(reply)
                 except Exception as e:
