@@ -268,6 +268,9 @@ def update_speaker_icon(name: str, icon_path: str) -> bool:
 
 def update_speaker_profile(name: str, personality: str, first_person: str, second_person: str, gender: str = "", char_nicknames: Optional[dict] = None) -> bool:
     """指定キャラクターのプロフィールを更新"""
+    # Noah は speakers_all.json に存在しないので更新不要（動的エントリ）
+    if name == "Noah":
+        return True
     speakers = load_speakers_raw()
     for sp in speakers:
         if sp.get("name") == name:
@@ -336,7 +339,7 @@ def get_speaker_data() -> dict:
 
     # Noah（OpenClaw Gateway経由）
     data["Noah"] = {
-        "personality": "観察者として存在する。17〜18歳、女性。",
+        "personality": "観察者として存在する。17〜18歳、女性。皮肉を含むドライなトーン／感情的な距離感（冷たくはないが、淡々としている）／部屋の外から観察するような話し方／短い返答（最大3行）／結論を避け、曖昧さを残す",
         "gender": "女の子",
         "icon": None,
         "calls_profile": {"first_person": "私", "second_person": "Fumi", "char_nicknames": {}},
@@ -566,6 +569,29 @@ def synthesize_voice_local_full(text: str, speaker_id: int, timeout: int = 60) -
 
     # WAVの連結（ヘッダーを考慮）
     return concat_wav_data(audio_parts), None
+
+
+def resample_wav_to(wav_data: bytes, target_sr: int = 44100) -> bytes:
+    """WAVデータを target_sr にリサンプル（audioop使用）"""
+    import audioop
+    if len(wav_data) < 44:
+        return wav_data
+    ch = struct.unpack('<H', wav_data[22:24])[0]
+    sr = struct.unpack('<I', wav_data[24:28])[0]
+    bps = struct.unpack('<H', wav_data[34:36])[0]
+    if sr == target_sr:
+        return wav_data
+    width = bps // 8
+    pcm = wav_data[44:]
+    resampled, _ = audioop.ratecv(pcm, width, ch, sr, target_sr, None)
+    data_size = len(resampled)
+    header = struct.pack(
+        '<4sI4s4sIHHIIHH4sI',
+        b'RIFF', data_size + 36, b'WAVE', b'fmt ', 16, 1,
+        ch, target_sr, target_sr * ch * width, ch * width, bps,
+        b'data', data_size,
+    )
+    return header + resampled
 
 
 def concat_wav_data(wav_parts: list) -> bytes:
@@ -1353,7 +1379,7 @@ with tab_chat:
                         if tts_enabled and intro_reply:
                             with st.spinner("🔊 音声生成中…"):
                                 tts_text = strip_urls_for_tts(intro_reply)
-                                if tts_mode == "local":
+                                if tts_mode == "local" or speaker_id >= 800_000_000:
                                     audio_data, tts_error = synthesize_voice_local_full(tts_text, speaker_id)
                                     audio_format = "wav"
                                 else:
@@ -1444,7 +1470,7 @@ with tab_chat:
                     if tts_enabled and reply:
                         with st.spinner(f"🔊 {char['name']}の音声生成中…"):
                             tts_text = strip_urls_for_tts(reply)
-                            if tts_mode == "local":
+                            if tts_mode == "local" or char["id"] >= 800_000_000:
                                 ad, te = synthesize_voice_local_full(tts_text, char["id"])
                                 af = "wav"
                             else:
@@ -1540,45 +1566,45 @@ with tab_chat:
         play_count = st.session_state.get("_tts_play_count", 0) + 1
         st.session_state["_tts_play_count"] = play_count
 
-        # 複数WAV音声がある場合は間に無音を挟んで1つに結合（autoplay制限回避）
-        if len(all_audio) > 1 and all(a["format"] == "wav" for a in all_audio):
-            # 最初のWAVからサンプルレート等を取得して2秒の無音を生成
+        # WAV同士の場合はリサンプルして1ファイルに結合（JS queue不要）
+        wav_only = all(a["format"] == "wav" for a in all_audio)
+        TARGET_SR = 44100
+        if len(all_audio) > 1 and wav_only:
+            # 全WAVを44100Hzに統一してから無音込みで結合
             first_wav = all_audio[0]["data"]
-            sr = struct.unpack('<I', first_wav[24:28])[0] if len(first_wav) >= 44 else 24000
             ch = struct.unpack('<H', first_wav[22:24])[0] if len(first_wav) >= 44 else 1
             bps = struct.unpack('<H', first_wav[34:36])[0] if len(first_wav) >= 44 else 16
-            silence_samples = sr * 2  # 2秒
-            silence_bytes = silence_samples * ch * (bps // 8)
-            silence_pcm = b'\x00' * silence_bytes
-            # 無音をWAVとしてパック
+            silence_samples = TARGET_SR  # 1秒
+            silence_pcm = b'\x00' * (silence_samples * ch * (bps // 8))
             silence_data_size = len(silence_pcm)
-            silence_file_size = silence_data_size + 36
             silence_wav = struct.pack(
                 '<4sI4s4sIHHIIHH4sI',
-                b'RIFF', silence_file_size, b'WAVE', b'fmt ', 16, 1,
-                ch, sr, sr * ch * (bps // 8), ch * (bps // 8), bps,
+                b'RIFF', silence_data_size + 36, b'WAVE', b'fmt ', 16, 1,
+                ch, TARGET_SR, TARGET_SR * ch * (bps // 8), ch * (bps // 8), bps,
                 b'data', silence_data_size,
             ) + silence_pcm
-            # 各WAVの間に無音WAVを挿入
             parts = []
             for i, a in enumerate(all_audio):
+                normalized = resample_wav_to(a["data"], TARGET_SR)
                 if i > 0:
                     parts.append(silence_wav)
-                parts.append(a["data"])
+                parts.append(normalized)
             combined = concat_wav_data(parts)
             all_audio = [{"data": combined, "format": "wav"}]
 
+        # 全音声を streamlit_js_eval で再生
+        # WAV同士は concat で1ファイルに統合済みなので基本的に entries は1つ
+        # MP3+WAV混在の場合は最初の1エントリのみ再生（cloud+Noahの暫定対応）
         a = all_audio[0]
         mime = "audio/wav" if a["format"] == "wav" else "audio/mp3"
         b64 = base64.b64encode(a["data"]).decode()
         js_code = f"""
-        (function() {{
-            var w = window.parent || window;
-            var audio = new w.Audio('data:{mime};base64,{b64}');
-            audio.play();
-            return 'ok';
-        }})()
-        """
+(function() {{
+    var w = window.parent || window;
+    var audio = new w.Audio('data:{mime};base64,{b64}');
+    audio.play();
+    return 'ok';
+}})()"""
         streamlit_js_eval(js_expressions=js_code, key=f"tts_play_{play_count}")
 
         st.session_state["last_audio"] = None
@@ -1728,7 +1754,8 @@ with tab_chat:
     def generate_tts_for_char(text, char_speaker_id):
         """キャラのspeaker_idでTTS生成し音声データを返す"""
         tts_text = strip_urls_for_tts(text)
-        if tts_mode == "local":
+        # AivisSpeech ID（Noah等）は常にローカルへ
+        if tts_mode == "local" or char_speaker_id >= 800_000_000:
             ad, te = synthesize_voice_local_full(tts_text, char_speaker_id)
             return ad, "wav", te
         else:
@@ -1793,6 +1820,11 @@ with tab_chat:
                     audio_data, audio_format, tts_error = generate_tts_for_char(reply, char["id"])
                     if audio_data:
                         audio_queue.append({"data": audio_data, "format": audio_format})
+                    else:
+                        import pathlib
+                        pathlib.Path("/tmp/tts_debug.log").write_text(
+                            f"char={char_name} id={char['id']} fmt={audio_format} err={tts_error} text_len={len(reply)}"
+                        )
 
         if audio_queue:
             st.session_state["last_audio"] = audio_queue[0]["data"]
