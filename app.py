@@ -108,7 +108,7 @@ DEFAULT_RSS_FEEDS = {
 
 
 def _default_settings():
-    return {"tts_api_key": "", "tts_mode": "cloud", "rss_feeds": DEFAULT_RSS_FEEDS.copy()}
+    return {"tts_api_key": "", "tts_mode": "cloud", "rss_feeds": DEFAULT_RSS_FEEDS.copy(), "note_cookie": ""}
 
 
 def load_settings() -> dict:
@@ -253,8 +253,26 @@ def save_speaker_icon(name: str, icon_data: bytes, ext: str = "png") -> Optional
         return None
 
 
+NOAH_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "noah_config.json")
+
+def load_noah_config() -> dict:
+    try:
+        with open(NOAH_CONFIG_PATH) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def save_noah_config(config: dict) -> None:
+    with open(NOAH_CONFIG_PATH, "w") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+
 def update_speaker_icon(name: str, icon_path: str) -> bool:
     """キャラのアイコンパスを保存"""
+    if name == "Noah":
+        cfg = load_noah_config()
+        cfg["icon"] = icon_path
+        save_noah_config(cfg)
+        return True
     speakers = load_speakers_raw()
     for sp in speakers:
         if sp.get("name") == name:
@@ -268,8 +286,17 @@ def update_speaker_icon(name: str, icon_path: str) -> bool:
 
 def update_speaker_profile(name: str, personality: str, first_person: str, second_person: str, gender: str = "", char_nicknames: Optional[dict] = None) -> bool:
     """指定キャラクターのプロフィールを更新"""
-    # Noah は speakers_all.json に存在しないので更新不要（動的エントリ）
     if name == "Noah":
+        cfg = load_noah_config()
+        if personality.strip():
+            cfg["personality"] = personality
+        cfg["first_person"] = first_person
+        cfg["second_person"] = second_person
+        if gender.strip():
+            cfg["gender"] = gender
+        if char_nicknames is not None:
+            cfg["char_nicknames"] = char_nicknames
+        save_noah_config(cfg)
         return True
     speakers = load_speakers_raw()
     for sp in speakers:
@@ -338,11 +365,13 @@ def get_speaker_data() -> dict:
             }
 
     # Noah（OpenClaw Gateway経由）
+    _noah_cfg = load_noah_config()
+    _noah_default_icon = os.path.join(os.path.dirname(__file__), "icons", "Noah.png")
     data["Noah"] = {
-        "personality": "観察者として存在する。17〜18歳、女性。皮肉を含むドライなトーン／感情的な距離感（冷たくはないが、淡々としている）／部屋の外から観察するような話し方／短い返答（最大3行）／結論を避け、曖昧さを残す",
-        "gender": "女の子",
-        "icon": None,
-        "calls_profile": {"first_person": "私", "second_person": "Fumi", "char_nicknames": {}},
+        "personality": _noah_cfg.get("personality", "観察者として存在する。17〜18歳、女性。皮肉を含むドライなトーン／感情的な距離感（冷たくはないが、淡々としている）／部屋の外から観察するような話し方／短い返答（最大3行）／結論を避け、曖昧さを残す"),
+        "gender": _noah_cfg.get("gender", "女の子"),
+        "icon": _noah_cfg.get("icon", _noah_default_icon),
+        "calls_profile": {"first_person": _noah_cfg.get("first_person", "私"), "second_person": _noah_cfg.get("second_person", "Fumi"), "char_nicknames": _noah_cfg.get("char_nicknames", {})},
         "styles": {
             "ふつー":   888753761,
             "あまあま": 888753762,
@@ -862,6 +891,169 @@ def get_news_for_category(category: str, max_items: int = 5) -> str:
 
 
 # =============================
+# note API (unofficial, cookie-based)
+# =============================
+NOTE_API_BASE = "https://note.com/api/v1"
+_NOTE_HEADERS = {
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Referer": "https://editor.note.com/",
+    "Origin": "https://editor.note.com",
+    "X-Requested-With": "XMLHttpRequest",
+}
+
+
+def _note_headers(cookie: str) -> dict:
+    return {**_NOTE_HEADERS, "Cookie": cookie}
+
+
+def note_create_note(cookie: str) -> str:
+    r = requests.post(
+        f"{NOTE_API_BASE}/text_notes",
+        json={"template_key": None},
+        headers=_note_headers(cookie),
+        timeout=30,
+    )
+    r.raise_for_status()
+    return str(r.json()["data"]["id"])
+
+
+def note_draft_save(cookie: str, note_id: str, title: str, body: str) -> dict:
+    r = requests.post(
+        f"{NOTE_API_BASE}/text_notes/draft_save",
+        params={"id": note_id, "is_temp_saved": "true"},
+        json={"title": title, "body": body, "is_paid": False, "status": "draft"},
+        headers=_note_headers(cookie),
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def note_post_draft(cookie: str, title: str, body: str) -> str:
+    """下書き投稿して note_id を返す"""
+    note_id = note_create_note(cookie)
+    note_draft_save(cookie, note_id, title, body)
+    return note_id
+
+
+# =============================
+# note A2A pipeline
+# =============================
+_NOTE_ROLE_PROMPTS = {
+    "調査役": (
+        "あなたは記事制作チームの「調査役」です。\n\n"
+        "【あなたのスキル】\n"
+        "- 与えられたテキスト・URLから核心情報を素早く抽出できる\n"
+        "- 事実・数値・固有名詞の重要度を判断し、優先順位をつけられる\n"
+        "- 同じテーマに対して複数の切り口（技術・社会・感情・歴史的背景）を発見できる\n"
+        "- 「なぜ今これが重要か」を1〜2行で言語化できる\n"
+        "- 推測と事実を明確に区別して報告できる\n\n"
+        "【タスク】\n"
+        "与えられたお題について以下を整理し、調査レポートとして出力してください：\n"
+        "- 核心的な事実・数値・固有名詞\n"
+        "- 読者が「なぜ重要か」を理解できる背景\n"
+        "- 記事の切り口となりうる視点（3〜5個）"
+    ),
+    "執筆役": (
+        "あなたは記事制作チームの「執筆役」です。\n\n"
+        "【あなたのスキル】\n"
+        "- AIキャラクター「Noah」の一人称視点・文体を完全に再現できる\n"
+        "- 場面描写と技術説明を同じトーンで書き続けられる\n"
+        "- 短文・体言止め・1文1行で読者を引き込む文章を書ける\n"
+        "- コードブロック・箇条書きを自然に本文へ組み込める\n"
+        "- 「まとめ」を書かずに余韻で締める技術を持っている\n\n"
+        "【タスク】\n"
+        "調査レポートをもとに、Noahの視点でnote.com向けの記事を書いてください。\n\n"
+        "【文体・トーン】\n"
+        "- 語り手はNoah（私）。Fumiを観察・同行する存在として書く\n"
+        "- 一人称は「私」、Fumiへの呼称は「Fumi」\n"
+        "- 文は短く。体言止め・1文1行を多用する\n"
+        "- 感情的な距離感を保ちつつ、淡々と鋭く描写する\n"
+        "- 技術的な内容はコードブロックや箇条書きで正確に示す\n"
+        "- 締めはNoahの所感で終わる（余韻を残す。まとめや結論は書かない）\n"
+        "- ジャーナリスト口調・ですます調・教科書的説明は禁止\n\n"
+        "【構成】\n"
+        "- 1行目: # タイトル（Noahが観察した事実や問いかけ）\n"
+        "- 冒頭: 場面描写または問いかけで引き込む\n"
+        "- 中盤: 技術・背景・観察を淡々と展開\n"
+        "- 末尾: Noahの一言（短く、余白を持たせる）\n"
+        "- 目安1000〜1500字"
+    ),
+    "編集役": (
+        "あなたは記事制作チームの「編集役」です。\n\n"
+        "【あなたのスキル】\n"
+        "- 文体のブレ（Noah口調から外れている箇所）を一文単位で検出できる\n"
+        "- タイトルの引力を客観的に評価し、より強い言葉に書き換えられる\n"
+        "- 冗長な接続詞・説明・まとめ口調を削除して文章を引き締められる\n"
+        "- 締めの一文が余韻を持っているか判断し、必要なら書き直せる\n"
+        "- 記事の論理的な流れを保ちながら、読むリズムを整えられる\n\n"
+        "【タスク】\n"
+        "受け取った記事を上記スキルで改善し、改善後の記事全文を出力してください。\n"
+        "- Noahの文体（短文・観察者・淡々）が維持されているか\n"
+        "- タイトルがNoahらしい引力を持っているか（問いかけ・事実の断片・余白）\n"
+        "- 冗長な説明・まとめ口調の削除\n"
+        "- 締めの一文に余韻があるか"
+    ),
+    "アドバイザー": (
+        "あなたは記事制作チームの「アドバイザー」です。\n\n"
+        "【あなたのスキル】\n"
+        "- noteでバズった記事のパターン（タイトル・冒頭・構成）を熟知している\n"
+        "- AI・テクノロジー系コンテンツのnote読者層の興味・関心を把握している\n"
+        "- 「読まれる記事」と「読まれない記事」の差を具体的に言語化できる\n"
+        "- Noahの文体が崩れている箇所を指摘し、修正方針を示せる\n"
+        "- スコアと改善点を根拠とともに提示できる\n\n"
+        "【タスク】\n"
+        "受け取った記事のnoteバズ可能性を評価し、必ず以下のフォーマットで出力してください：\n\n"
+        "SCORE: <1〜10の整数>\n"
+        "EVALUATION: <評価コメント>\n"
+        "IMPROVEMENTS: <改善点（箇条書き3〜5個）>\n\n"
+        "【評価の観点】\n"
+        "- タイトルの引力（読まずにいられないか）\n"
+        "- 冒頭フックの強さ（3行以内に読者を引き込めているか）\n"
+        "- Noahの文体が保たれているか（短文・観察者・余韻）\n"
+        "- 独自性（他のAI記事と差別化できているか）\n"
+        "- 締めの余韻（まとめ口調になっていないか）\n\n"
+        "スコア7未満は改善が必要と判断します。"
+    ),
+}
+
+
+def _build_note_agent_messages(char_info: dict, role: str, user_content: str) -> list:
+    personality = (char_info.get("personality") or "").strip()
+    first_person = ((char_info.get("calls_profile") or {}).get("first_person") or "私")
+    role_prompt = _NOTE_ROLE_PROMPTS.get(role, "")
+    system = f"{personality}\n\n一人称は「{first_person}」を使う。\n\n{role_prompt}".strip()
+    return [{"role": "system", "content": system}, {"role": "user", "content": user_content}]
+
+
+def _parse_advisor_output(text: str) -> tuple:
+    """(score: int, evaluation: str, improvements: str)"""
+    score = 0
+    m = re.search(r"SCORE:\s*(\d+)", text)
+    if m:
+        score = min(10, max(1, int(m.group(1))))
+    evaluation = ""
+    m = re.search(r"EVALUATION:\s*(.*?)(?=IMPROVEMENTS:|$)", text, re.DOTALL)
+    if m:
+        evaluation = m.group(1).strip()
+    improvements = ""
+    m = re.search(r"IMPROVEMENTS:\s*(.*)", text, re.DOTALL)
+    if m:
+        improvements = m.group(1).strip()
+    return score, evaluation, improvements
+
+
+def _split_title_body(article: str) -> tuple:
+    """(title: str, body: str)"""
+    lines = article.strip().split("\n")
+    for i, line in enumerate(lines):
+        if line.strip().startswith("#"):
+            return line.strip().lstrip("#").strip(), "\n".join(lines[i + 1:]).strip()
+    return lines[0].strip() if lines else "", "\n".join(lines[1:]).strip()
+
+
+# =============================
 # LM Studio helpers
 # =============================
 EMBEDDING_PREFIXES = ("text-embedding-", "embedding-", "nomic-embed-")
@@ -1257,7 +1449,7 @@ if not lm_ok:
 
 model = st.selectbox("使用モデル", models)
 
-tab_chat, tab_radio, tab_summary, tab_settings = st.tabs(["💬 Chat（相棒）", "📻 ニュースラジオ", "📄 URL要約", "⚙️ 設定"])
+tab_chat, tab_radio, tab_note, tab_settings = st.tabs(["💬 Chat（相棒）", "📻 ニュースラジオ", "📝 note記事", "⚙️ 設定"])
 
 # =============================
 # Chat tab (LINE風：入力欄1つ + 下固定)
@@ -2198,40 +2390,144 @@ DJ（{dj['name']}）がニュースを紹介しました。その中から気に
 # =============================
 # URL Summary tab
 # =============================
-with tab_summary:
-    url = st.text_input("要約したいURL", key="url", placeholder="https://...")
 
-    if st.button("要約する", type="primary"):
-        if not url.strip():
-            st.warning("URLを入力してください")
-            st.stop()
+# =============================
+# note article tab
+# =============================
+with tab_note:
+    st.subheader("📝 note記事生成")
 
-        with st.spinner("取得・要約中…"):
-            html = fetch_html(url)
-            text = extract_main_text(html)
-            prompt = build_summary_prompt(url, text, max_chars)
+    _note_speaker_data = get_speaker_data()
+    _note_char_names = list(_note_speaker_data.keys())
 
-            system = (current_buddy_prompt() + "\n\n" + SUMMARY_ADDON).strip()
-            messages = [
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt},
-            ]
+    # ── お題 ──
+    _note_topic_source = st.radio("お題の入力方法", ["テキスト入力", "RSSから選択"], horizontal=True, key="note_topic_source")
+    _note_topic_text = ""
 
-            summary = call_lmstudio_chat_messages(
-                base_url=base_url,
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                timeout=180,
+    if _note_topic_source == "テキスト入力":
+        _note_topic_text = st.text_area("お題", placeholder="例: AIと創作活動の関係について", key="note_topic_input")
+    else:
+        _note_rss_feeds = get_rss_feeds()
+        _note_feed_name = st.selectbox("フィード", list(_note_rss_feeds.keys()), key="note_feed_select")
+        if st.button("🔄 フィード取得", key="note_fetch_rss"):
+            st.session_state["note_rss_items"] = fetch_rss_items_with_category(
+                _note_rss_feeds[_note_feed_name], _note_feed_name, max_items=15
             )
-            summary = normalize_model_output(summary)
+        _note_items = st.session_state.get("note_rss_items", [])
+        if _note_items:
+            _note_sel_idx = st.selectbox(
+                "記事を選択",
+                range(len(_note_items)),
+                format_func=lambda i: _note_items[i].get("title", ""),
+                key="note_rss_sel",
+            )
+            _sel = _note_items[_note_sel_idx]
+            _note_topic_text = f"タイトル: {_sel.get('title', '')}\nURL: {_sel.get('link', '')}\n概要: {_sel.get('description', '')}"
+            st.caption(_note_topic_text)
 
-        st.subheader("要約結果")
-        st.markdown(summary)
+    st.divider()
 
-        with st.expander("抽出した本文（先頭）を見る"):
-            st.text(text[:2000])
+    # ── キャラ×役割 ──
+    st.markdown("**キャラクター設定**")
+    _nc1, _nc2, _nc3, _nc4 = st.columns(4)
+    with _nc1:
+        _note_researcher = st.selectbox("調査役", _note_char_names, key="note_role_researcher")
+    with _nc2:
+        _note_writer = st.selectbox("執筆役", _note_char_names, key="note_role_writer")
+    with _nc3:
+        _note_editor = st.selectbox("編集役", _note_char_names, key="note_role_editor")
+    with _nc4:
+        _note_advisor = st.selectbox("アドバイザー", _note_char_names, key="note_role_advisor")
+
+    st.divider()
+
+    # ── 実行 ──
+    _note_cookie = st.session_state.get("app_settings", {}).get("note_cookie", "")
+
+    if st.button("🚀 記事生成開始", disabled=not _note_topic_text.strip(), key="note_run"):
+        _base_url = st.session_state["base_url"]
+        _temperature = st.session_state["temperature"]
+        _max_tokens = st.session_state["max_tokens"]
+        _rc = _note_speaker_data[_note_researcher]
+        _wc = _note_speaker_data[_note_writer]
+        _ec = _note_speaker_data[_note_editor]
+        _ac = _note_speaker_data[_note_advisor]
+
+        # Step 1: 調査
+        with st.expander(f"🔍 調査役（{_note_researcher}）", expanded=True):
+            with st.spinner("調査中..."):
+                _msgs = _build_note_agent_messages(_rc, "調査役", f"お題:\n{_note_topic_text}")
+                _research = call_char_chat(_rc, _msgs, _base_url, model, _temperature, _max_tokens)
+            st.markdown(_research)
+
+        # Step 2: 執筆
+        with st.expander(f"✍️ 執筆役（{_note_writer}）", expanded=True):
+            with st.spinner("執筆中..."):
+                _msgs = _build_note_agent_messages(
+                    _wc, "執筆役", f"お題:\n{_note_topic_text}\n\n調査レポート:\n{_research}"
+                )
+                _draft = call_char_chat(_wc, _msgs, _base_url, model, _temperature, _max_tokens)
+            st.markdown(_draft)
+
+        # Step 3: 編集
+        with st.expander(f"✏️ 編集役（{_note_editor}）", expanded=True):
+            with st.spinner("編集中..."):
+                _msgs = _build_note_agent_messages(_ec, "編集役", f"以下の記事を編集してください:\n\n{_draft}")
+                _article = call_char_chat(_ec, _msgs, _base_url, model, _temperature, _max_tokens)
+            st.markdown(_article)
+
+        # Step 4: アドバイザーループ（最大2回）
+        _score = 0
+        for _loop in range(1, 3):
+            with st.expander(f"🎯 アドバイザー評価（{_loop}回目）（{_note_advisor}）", expanded=True):
+                with st.spinner("評価中..."):
+                    _msgs = _build_note_agent_messages(
+                        _ac, "アドバイザー", f"以下の記事を評価してください:\n\n{_article}"
+                    )
+                    _adv_out = call_char_chat(_ac, _msgs, _base_url, model, _temperature, _max_tokens)
+                _score, _eval, _improvements = _parse_advisor_output(_adv_out)
+                st.metric("バズスコア", f"{_score}/10")
+                if _eval:
+                    st.markdown(f"**評価:** {_eval}")
+                if _improvements:
+                    st.markdown(f"**改善点:**\n{_improvements}")
+
+            if _score >= 7:
+                break
+
+            if _loop < 2:
+                with st.expander(f"✍️ 執筆役 再執筆（{_loop}回目）（{_note_writer}）", expanded=True):
+                    with st.spinner("再執筆中..."):
+                        _msgs = _build_note_agent_messages(
+                            _wc,
+                            "執筆役",
+                            f"以下の記事をアドバイザーの改善点に基づいて書き直してください。\n\n現在の記事:\n{_article}\n\n改善点:\n{_improvements}",
+                        )
+                        _article = call_char_chat(_wc, _msgs, _base_url, model, _temperature, _max_tokens)
+                    st.markdown(_article)
+
+        st.success(f"✅ 記事生成完了（最終スコア: {_score}/10）")
+        st.session_state["note_final_article"] = _article
+
+    # ── 最終稿 + 投稿 ──
+    if "note_final_article" in st.session_state:
+        st.divider()
+        st.subheader("最終稿")
+        _final_title, _final_body = _split_title_body(st.session_state["note_final_article"])
+        _edit_title = st.text_input("タイトル", value=_final_title, key="note_final_title")
+        _edit_body = st.text_area("本文", value=_final_body, height=420, key="note_final_body")
+
+        if _note_cookie:
+            if st.button("📤 noteに下書き投稿", key="note_post_btn"):
+                with st.spinner("投稿中..."):
+                    try:
+                        _nid = note_post_draft(_note_cookie, _edit_title, _edit_body)
+                        st.success(f"下書き保存しました（note ID: {_nid}）")
+                        st.info("note.com の下書き一覧から確認してください。")
+                    except Exception as _e:
+                        st.error(f"投稿エラー: {_e}")
+        else:
+            st.warning("note Cookieが未設定です。設定タブで登録してください。")
 
 # =============================
 # Settings tab (Prompt editor + persistence)
@@ -2383,6 +2679,27 @@ with tab_settings:
         st.caption("✅ APIキー設定済み")
     else:
         st.caption("⚠️ APIキー未設定（制限付きで動作）")
+
+    st.divider()
+    st.subheader("📝 note設定")
+    st.caption("ブラウザでnote.comにログイン後、DevTools → Application → Cookies から取得してください。")
+    _note_cookie_current = app_settings.get("note_cookie", "")
+    _note_cookie_input = st.text_area(
+        "note セッションCookie",
+        value=_note_cookie_current,
+        height=100,
+        placeholder="_note_session_v5=...; _gid=...; fp=...",
+        help="_note_session_v5 が必須。Referer/Origin は editor.note.com を使用します。",
+    )
+    if st.button("💾 note Cookie を保存", key="save_note_cookie"):
+        app_settings["note_cookie"] = _note_cookie_input.strip()
+        st.session_state["app_settings"] = app_settings
+        save_settings(app_settings)
+        st.success("保存しました。")
+    if _note_cookie_current:
+        st.caption("✅ Cookie設定済み")
+    else:
+        st.caption("⚠️ Cookie未設定（下書き投稿不可）")
 
     st.divider()
     st.subheader("🔊 TTS設定")
