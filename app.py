@@ -1027,6 +1027,12 @@ def _build_note_agent_messages(char_info: dict, role: str, user_content: str) ->
     return [{"role": "system", "content": system}, {"role": "user", "content": user_content}]
 
 
+def _build_hermes_prompt(role: str, user_content: str) -> str:
+    """HermesAgent(-z)用の単一プロンプト文字列を生成する。"""
+    role_prompt = _NOTE_ROLE_PROMPTS.get(role, "")
+    return f"{role_prompt}\n\n---\n\n{user_content}"
+
+
 def _parse_advisor_output(text: str) -> tuple:
     """(score: int, evaluation: str, improvements: str)"""
     score = 0
@@ -1108,6 +1114,24 @@ def call_char_chat(char_info: dict, messages: list, base_url: str, model: str,
     if char_info.get("is_noah"):
         return call_noah_chat(messages, timeout=timeout)
     return call_lmstudio_chat_messages(base_url, model, messages, temperature, max_tokens, timeout)
+
+
+def call_hermes_agent(prompt: str, timeout: int = 300) -> str:
+    """HermesAgent（hermes -z）をサブプロセスで呼び出す。記憶・学習あり。"""
+    import subprocess
+    env = os.environ.copy()
+    env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + env.get("PATH", "")
+    result = subprocess.run(
+        ["hermes", "-z", prompt],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        env=env,
+    )
+    output = result.stdout.strip()
+    if result.returncode != 0 or not output:
+        raise RuntimeError(result.stderr.strip() or "HermesAgent returned empty response")
+    return output
 
 
 # =============================
@@ -2453,30 +2477,31 @@ with tab_note:
         _ec = _note_speaker_data[_note_editor]
         _ac = _note_speaker_data[_note_advisor]
 
-        # Step 1: 調査
+        # Step 1: 調査（HermesAgent）
         with st.expander(f"🔍 調査役（{_note_researcher}）", expanded=True):
             with st.spinner("調査中..."):
-                _msgs = _build_note_agent_messages(_rc, "調査役", f"お題:\n{_note_topic_text}")
-                _research = call_char_chat(_rc, _msgs, _base_url, model, _temperature, _max_tokens)
+                _research = call_hermes_agent(
+                    _build_hermes_prompt("調査役", f"お題:\n{_note_topic_text}")
+                )
             st.markdown(_research)
 
-        # Step 2: 執筆
+        # Step 2: 執筆（HermesAgent）
         with st.expander(f"✍️ 執筆役（{_note_writer}）", expanded=True):
             with st.spinner("執筆中..."):
-                _msgs = _build_note_agent_messages(
-                    _wc, "執筆役", f"お題:\n{_note_topic_text}\n\n調査レポート:\n{_research}"
+                _draft = call_hermes_agent(
+                    _build_hermes_prompt("執筆役", f"お題:\n{_note_topic_text}\n\n調査レポート:\n{_research}")
                 )
-                _draft = call_char_chat(_wc, _msgs, _base_url, model, _temperature, _max_tokens)
             st.markdown(_draft)
 
-        # Step 3: 編集
+        # Step 3: 編集（HermesAgent）
         with st.expander(f"✏️ 編集役（{_note_editor}）", expanded=True):
             with st.spinner("編集中..."):
-                _msgs = _build_note_agent_messages(_ec, "編集役", f"以下の記事を編集してください:\n\n{_draft}")
-                _article = call_char_chat(_ec, _msgs, _base_url, model, _temperature, _max_tokens)
+                _article = call_hermes_agent(
+                    _build_hermes_prompt("編集役", f"以下の記事を編集してください:\n\n{_draft}")
+                )
             st.markdown(_article)
 
-        # Step 4: アドバイザーループ（最大2回）
+        # Step 4: アドバイザーループ（最大2回）OpenClaw/ChatGPT
         _score = 0
         for _loop in range(1, 3):
             with st.expander(f"🎯 アドバイザー評価（{_loop}回目）（{_note_advisor}）", expanded=True):
@@ -2484,7 +2509,7 @@ with tab_note:
                     _msgs = _build_note_agent_messages(
                         _ac, "アドバイザー", f"以下の記事を評価してください:\n\n{_article}"
                     )
-                    _adv_out = call_char_chat(_ac, _msgs, _base_url, model, _temperature, _max_tokens)
+                    _adv_out = call_noah_chat(_msgs)
                 _score, _eval, _improvements = _parse_advisor_output(_adv_out)
                 st.metric("バズスコア", f"{_score}/10")
                 if _eval:
@@ -2498,12 +2523,12 @@ with tab_note:
             if _loop < 2:
                 with st.expander(f"✍️ 執筆役 再執筆（{_loop}回目）（{_note_writer}）", expanded=True):
                     with st.spinner("再執筆中..."):
-                        _msgs = _build_note_agent_messages(
-                            _wc,
-                            "執筆役",
-                            f"以下の記事をアドバイザーの改善点に基づいて書き直してください。\n\n現在の記事:\n{_article}\n\n改善点:\n{_improvements}",
+                        _article = call_hermes_agent(
+                            _build_hermes_prompt(
+                                "執筆役",
+                                f"以下の記事をアドバイザーの改善点に基づいて書き直してください。\n\n現在の記事:\n{_article}\n\n改善点:\n{_improvements}",
+                            )
                         )
-                        _article = call_char_chat(_wc, _msgs, _base_url, model, _temperature, _max_tokens)
                     st.markdown(_article)
 
         st.success(f"✅ 記事生成完了（最終スコア: {_score}/10）")
