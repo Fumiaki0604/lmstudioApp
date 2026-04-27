@@ -53,6 +53,18 @@ NOAH_GATEWAY_URL = "http://127.0.0.1:18789/v1"
 NOAH_GATEWAY_TOKEN = "6895f0f1b82148769d5191c143103f275622105e12f4acd2b18476c787429658"
 NOAH_SPEAKER_ID = 888753761  # まお ふつー
 
+_NOAH_MOOD_SPEAKER = {
+    "happy": 888753762, "joy": 888753762,          # あまあま
+    "calm": 888753763, "serious": 888753763, "think": 888753763,  # おちつき
+    "tease": 888753764, "irony": 888753764,        # からかい
+    "sad": 888753765, "melancholy": 888753765,     # せつなめ
+}
+
+def _noah_speaker_from_mood(mood: str | None, default_id: int) -> int:
+    if not mood:
+        return default_id
+    return _NOAH_MOOD_SPEAKER.get(mood.lower(), default_id)
+
 
 # =============================
 # Persistence
@@ -1129,14 +1141,17 @@ def call_noah_chat(messages: list, timeout: int = 60) -> str:
                       headers={"Authorization": f"Bearer {NOAH_GATEWAY_TOKEN}"})
     r.raise_for_status()
     raw = r.json()["choices"][0]["message"]["content"]
-    return re.sub(r"^\[MOOD:[^\]]+\]\s*", "", raw)
+    m = re.match(r"^\[MOOD:([^\]]+)\]\s*", raw)
+    mood = m.group(1).lower() if m else None
+    text = raw[m.end():] if m else raw
+    return text, mood
 
 
 def call_char_chat(char_info: dict, messages: list, base_url: str, model: str,
-                   temperature: float, max_tokens: int, timeout: int = 180) -> str:
+                   temperature: float, max_tokens: int, timeout: int = 180) -> tuple:
     if char_info.get("is_noah"):
         return call_noah_chat(messages, timeout=timeout)
-    return call_lmstudio_chat_messages(base_url, model, messages, temperature, max_tokens, timeout)
+    return call_lmstudio_chat_messages(base_url, model, messages, temperature, max_tokens, timeout), None
 
 
 def call_hermes_agent(prompt: str, timeout: int = 300) -> str:
@@ -1605,7 +1620,7 @@ with tab_chat:
                 intro_prompt = build_intro_prompt(chat_characters[0])
                 with st.spinner(f"📰 {selected_category}の最新ニュースを確認中…"):
                     try:
-                        intro_reply = call_char_chat(
+                        intro_reply, _mood = call_char_chat(
                             chat_characters[0],
                             messages=[{"role": "user", "content": intro_prompt}],
                             base_url=base_url, model=model,
@@ -1694,7 +1709,7 @@ with tab_chat:
 
                     with st.spinner(f"📰 {char['name']}がニュースを確認中…"):
                         try:
-                            reply = call_char_chat(
+                            reply, _mood = call_char_chat(
                                 char, msgs,
                                 base_url=base_url, model=model,
                                 temperature=temperature, max_tokens=max_tokens,
@@ -2041,9 +2056,10 @@ with tab_chat:
                     history.append({"role": "assistant", "content": m["content"]})
             messages = [{"role": "system", "content": system}] + history
 
+            _char_mood = None
             with st.spinner(f"💭 {char_name}が考え中…"):
                 try:
-                    reply = call_char_chat(
+                    reply, _char_mood = call_char_chat(
                         char, messages,
                         base_url=base_url, model=model,
                         temperature=temperature, max_tokens=max_tokens,
@@ -2056,7 +2072,8 @@ with tab_chat:
 
             if tts_enabled and reply:
                 with st.spinner(f"🔊 {char_name}の音声生成中…"):
-                    audio_data, audio_format, tts_error = generate_tts_for_char(reply, char["id"])
+                    _tts_id = _noah_speaker_from_mood(_char_mood, char["id"]) if char.get("is_noah") else char["id"]
+                    audio_data, audio_format, tts_error = generate_tts_for_char(reply, _tts_id)
                     if audio_data:
                         audio_queue.append({"data": audio_data, "format": audio_format})
                     else:
@@ -2084,9 +2101,10 @@ with tab_chat:
             history = current_chat[-12:]
             messages = [{"role": "system", "content": system}] + history
 
+            _reply_mood = None
             with st.spinner("考え中…"):
                 try:
-                    reply = call_char_chat(
+                    reply, _reply_mood = call_char_chat(
                         chat_characters[0], messages,
                         base_url=base_url, model=model,
                         temperature=temperature, max_tokens=max_tokens,
@@ -2099,7 +2117,8 @@ with tab_chat:
 
             if tts_enabled and reply:
                 with st.spinner("🔊 音声生成中…"):
-                    audio_data, audio_format, tts_error = generate_tts_for_char(reply, speaker_id)
+                    _tts_sid = _noah_speaker_from_mood(_reply_mood, speaker_id) if chat_characters[0].get("is_noah") else speaker_id
+                    audio_data, audio_format, tts_error = generate_tts_for_char(reply, _tts_sid)
                     if audio_data:
                         st.session_state["last_audio"] = audio_data
                         st.session_state["last_audio_format"] = audio_format
@@ -2532,7 +2551,7 @@ with tab_note:
                     _msgs = _build_note_agent_messages(
                         _ac, "アドバイザー", f"以下の記事を評価してください:\n\n{_article}"
                     )
-                    _adv_out = call_noah_chat(_msgs)
+                    _adv_out, _ = call_noah_chat(_msgs)
                 _score, _eval, _improvements = _parse_advisor_output(_adv_out)
                 st.metric("バズスコア", f"{_score}/10")
                 if _eval:
