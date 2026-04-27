@@ -1942,7 +1942,11 @@ with tab_chat:
     # --- システムプロンプト構築用ヘルパー ---
     def build_system_prompt(char_info_dict, extra=""):
         """キャラ情報dictからシステムプロンプトを構築"""
-        sys = current_buddy_prompt()
+        c_personality = char_info_dict.get("personality")
+        c_gender = char_info_dict.get("gender")
+        c_calls = char_info_dict.get("calls_profile") or {}
+        # キャラ独自のpersonalityがあればバディプロンプトは使わない
+        sys = c_personality if c_personality else current_buddy_prompt()
         now = datetime.now(ZoneInfo("Asia/Tokyo"))
         weekdays = ["月", "火", "水", "木", "金", "土", "日"]
         today_str = now.strftime("%Y年%m月%d日") + f"（{weekdays[now.weekday()]}）"
@@ -1964,11 +1968,6 @@ with tab_chat:
                 sys += f"\n\n【会話の焦点】ユーザーは「{current_cat}」に関する話題に興味があります。この分野のニュースについて詳しく解説・議論してください。"
         if tts_enabled and tts_mode == "cloud":
             sys += "\n\n【重要】音声読み上げモードです。返答は簡潔に、3〜4文程度（150文字以内）でまとめてください。"
-        c_personality = char_info_dict.get("personality")
-        c_gender = char_info_dict.get("gender")
-        c_calls = char_info_dict.get("calls_profile") or {}
-        if c_personality:
-            sys += f"\n\n【キャラクター設定】\nあなたは「{char_info_dict['name']}」です。以下の性格で返答してください: {c_personality}"
         if c_gender:
             gender_hint = {
                 "男性": "性別: 男性（大人の男性として話す）",
