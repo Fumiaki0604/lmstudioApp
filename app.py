@@ -1099,7 +1099,30 @@ def call_lmstudio_chat_messages(
     return r.json()["choices"][0]["message"]["content"]
 
 
+_OPENCLAW_WORKSPACE = Path.home() / ".openclaw" / "workspace"
+_NOAH_MEMORY_FILES = ["IDENTITY.md", "RELATIONSHIP.md", "KNOWLEDGE.md", "OBSERVATIONS.md"]
+
+
+def _load_noah_workspace_memory() -> str:
+    """~/.openclaw/workspace/ から主要ファイルを読み込んでテキストに結合する。"""
+    parts = []
+    for fname in _NOAH_MEMORY_FILES:
+        fpath = _OPENCLAW_WORKSPACE / fname
+        if fpath.exists():
+            content = fpath.read_text(encoding="utf-8").strip()
+            if content:
+                parts.append(f"### {fname}\n{content}")
+    return "\n\n".join(parts)
+
+
 def call_noah_chat(messages: list, timeout: int = 60) -> str:
+    memory = _load_noah_workspace_memory()
+    if memory:
+        # 既存のsystemメッセージにメモリを追記、なければ先頭に追加
+        if messages and messages[0]["role"] == "system":
+            messages = [{"role": "system", "content": messages[0]["content"] + f"\n\n---\n## Noahのワークスペース記憶\n{memory}"}] + messages[1:]
+        else:
+            messages = [{"role": "system", "content": f"## Noahのワークスペース記憶\n{memory}"}] + messages
     endpoint = NOAH_GATEWAY_URL.rstrip("/") + "/chat/completions"
     payload = {"model": "openclaw:default", "messages": messages, "stream": False, "user": "lmstudio-app"}
     r = requests.post(endpoint, json=payload, timeout=timeout,
@@ -2000,6 +2023,7 @@ with tab_chat:
 - {build_talk_target_instruction(other_names, include_user=False)}
 【絶対厳守】あなたは「{char_name}」です。自分の返答だけを出力すること。他のキャラの返答は絶対に書かないこと。【キャラ名】のような表記も使わないこと。
 {f'- 一人称は必ず「{c_fp}」を使うこと。他のキャラの一人称は絶対に使わないこと。' if c_fp else ''}
+【繰り返し禁止】自分が直前のターンで言ったことを同じ表現・同じ内容で繰り返すことは絶対にしないこと。新しい観点・感情・情報・質問を必ず加えること。
 【呼び名ルール（厳守）】
 {nickname_lines if nickname_lines else ''}- 他のキャラの口調・一人称・二人称を絶対に真似しないでください。自分のキャラクター設定だけに忠実に話してください。"""
 
