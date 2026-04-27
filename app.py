@@ -54,16 +54,38 @@ NOAH_GATEWAY_TOKEN = "6895f0f1b82148769d5191c143103f275622105e12f4acd2b18476c787
 NOAH_SPEAKER_ID = 888753761  # まお ふつー
 
 _NOAH_MOOD_SPEAKER = {
-    "happy": 888753762, "joy": 888753762,          # あまあま
-    "calm": 888753763, "serious": 888753763, "think": 888753763,  # おちつき
-    "tease": 888753764, "irony": 888753764,        # からかい
-    "sad": 888753765, "melancholy": 888753765,     # せつなめ
+    "happy": 888753762, "joy": 888753762,
+    "calm": 888753763, "serious": 888753763, "think": 888753763,
+    "tease": 888753764, "irony": 888753764,
+    "sad": 888753765, "melancholy": 888753765,
+}
+
+# MOOD tag → スタイル名キーワード（Voicevox汎用）
+_MOOD_STYLE_KEYWORDS = {
+    "happy":   ["あまあま", "たのしい", "喜び", "元気", "わーい", "うきうき"],
+    "angry":   ["ツンツン", "ツンギレ", "おこ", "怒り", "不機嫌", "つよつよ"],
+    "sad":     ["なみだめ", "びえーん", "かなしい", "悲しみ", "かなしみ", "絶望"],
+    "whisper": ["ささやき", "ヒソヒソ", "内緒話"],
+    "tired":   ["ヘロヘロ", "へろへろ", "ヘロヘロ", "よわよわ"],
+    "calm":    ["おちつき", "のんびり", "しっとり", "低血圧"],
+    "sexy":    ["セクシー", "けだるげ"],
 }
 
 def _noah_speaker_from_mood(mood, default_id: int) -> int:
     if not mood:
         return default_id
     return _NOAH_MOOD_SPEAKER.get(mood.lower(), default_id)
+
+def _speaker_from_mood(mood, styles_dict: dict, default_id: int) -> int:
+    """キャラ汎用: MOODタグからspeaker_idを返す（スタイル名キーワードで照合）"""
+    if not mood:
+        return default_id
+    keywords = _MOOD_STYLE_KEYWORDS.get(mood.lower(), [])
+    for kw in keywords:
+        for style_name, sid in styles_dict.items():
+            if kw in style_name:
+                return sid
+    return default_id
 
 
 # =============================
@@ -1151,7 +1173,11 @@ def call_char_chat(char_info: dict, messages: list, base_url: str, model: str,
                    temperature: float, max_tokens: int, timeout: int = 180) -> tuple:
     if char_info.get("is_noah"):
         return call_noah_chat(messages, timeout=timeout)
-    return call_lmstudio_chat_messages(base_url, model, messages, temperature, max_tokens, timeout), None
+    raw = call_lmstudio_chat_messages(base_url, model, messages, temperature, max_tokens, timeout)
+    m = re.match(r"^\[MOOD:([^\]]+)\]\s*", raw)
+    mood = m.group(1).lower() if m else None
+    text = raw[m.end():] if m else raw
+    return text, mood
 
 
 def call_hermes_agent(prompt: str, timeout: int = 300) -> str:
@@ -1351,11 +1377,11 @@ with st.sidebar:
         char_info = speaker_data[selected_char]
         style_names = list(char_info["styles"].keys())
         default_style_idx = next((i for i, s in enumerate(style_names) if s == "ノーマル"), 0)
-        # Noahはスタイルをモード連動で自動切替するため手動選択不要
-        if len(style_names) > 1 and not char_info.get("is_noah"):
-            selected_style = st.selectbox("スタイル", style_names, index=default_style_idx)
-        else:
+        # スタイル複数持ちはMOOD自動切替のため手動選択不要
+        if len(style_names) == 1:
             selected_style = style_names[0]
+        else:
+            selected_style = style_names[default_style_idx]
 
         speaker_id = char_info["styles"][selected_style]
         speaker_personality = char_info["personality"]
@@ -1376,7 +1402,7 @@ with st.sidebar:
         chat_mode = st.radio("会話モード", ["1対1", "3人", "4人"], horizontal=True, key="chat_mode")
 
         # キャラB/C選択（複数人モード時）
-        chat_characters = [{"name": selected_char, "id": speaker_id, "personality": speaker_personality, "gender": speaker_gender, "calls_profile": speaker_calls_profile}]
+        chat_characters = [{"name": selected_char, "id": speaker_id, "personality": speaker_personality, "gender": speaker_gender, "calls_profile": speaker_calls_profile, "styles": char_info.get("styles", {}), "is_noah": char_info.get("is_noah", False)}]
         if chat_mode in ["3人", "4人"]:
             other_chars = [n for n in char_names if n != selected_char]
             if other_chars:
@@ -1389,10 +1415,7 @@ with st.sidebar:
                 char_info_b = speaker_data[selected_char_b]
                 style_names_b = list(char_info_b["styles"].keys())
                 default_style_idx_b = next((i for i, s in enumerate(style_names_b) if s == "ノーマル"), 0)
-                if len(style_names_b) > 1:
-                    selected_style_b = st.selectbox("スタイルB", style_names_b, index=default_style_idx_b, key="style_b_select")
-                else:
-                    selected_style_b = style_names_b[0]
+                selected_style_b = style_names_b[default_style_idx_b]
                 if char_info_b.get("personality"):
                     st.caption(f"{char_info_b['personality']}")
                 if char_info_b.get("gender"):
@@ -1403,6 +1426,8 @@ with st.sidebar:
                     "personality": char_info_b["personality"],
                     "gender": char_info_b.get("gender"),
                     "calls_profile": char_info_b["calls_profile"],
+                    "styles": char_info_b.get("styles", {}),
+                    "is_noah": char_info_b.get("is_noah", False),
                 })
         if chat_mode == "4人":
             other_chars_c = [n for n in char_names if n != selected_char and n != selected_char_b]
@@ -1415,10 +1440,7 @@ with st.sidebar:
                 char_info_c = speaker_data[selected_char_c]
                 style_names_c = list(char_info_c["styles"].keys())
                 default_style_idx_c = next((i for i, s in enumerate(style_names_c) if s == "ノーマル"), 0)
-                if len(style_names_c) > 1:
-                    selected_style_c = st.selectbox("スタイルC", style_names_c, index=default_style_idx_c, key="style_c_select")
-                else:
-                    selected_style_c = style_names_c[0]
+                selected_style_c = style_names_c[default_style_idx_c]
                 if char_info_c.get("personality"):
                     st.caption(f"{char_info_c['personality']}")
                 if char_info_c.get("gender"):
@@ -1429,6 +1451,8 @@ with st.sidebar:
                     "personality": char_info_c["personality"],
                     "gender": char_info_c.get("gender"),
                     "calls_profile": char_info_c["calls_profile"],
+                    "styles": char_info_c.get("styles", {}),
+                    "is_noah": char_info_c.get("is_noah", False),
                 })
     else:
         st.warning("speakers_all.json が見つかりません")
@@ -2001,6 +2025,11 @@ with tab_chat:
             if second_p:
                 pronoun_text += f"- 相手（ユーザー）のことは会話の流れで「{second_p}」と呼んでください（ただし挨拶や呼びかけには使わない。「こんにちは、{second_p}」はNG）\n"
             sys += "\n\n" + pronoun_text.strip()
+        # Voicevoxキャラでスタイル複数持ちの場合はMOOD指示を追加
+        char_styles = char_info_dict.get("styles") or {}
+        if not char_info_dict.get("is_noah") and len(char_styles) > 1:
+            style_keys = "、".join(char_styles.keys())
+            sys += f"\n\n【感情タグ】返答の冒頭に必ず [MOOD:xxx] を付けること。xxx は normal/happy/angry/sad/whisper/tired/calm/sexy のどれかを選ぶ。"
         if extra:
             sys += "\n\n" + extra
         return sys
@@ -2073,7 +2102,7 @@ with tab_chat:
 
             if tts_enabled and reply:
                 with st.spinner(f"🔊 {char_name}の音声生成中…"):
-                    _tts_id = _noah_speaker_from_mood(_char_mood, char["id"]) if char.get("is_noah") else char["id"]
+                    _tts_id = _speaker_from_mood(_char_mood, char.get("styles", {}), char["id"])
                     audio_data, audio_format, tts_error = generate_tts_for_char(reply, _tts_id)
                     if audio_data:
                         audio_queue.append({"data": audio_data, "format": audio_format})
@@ -2118,7 +2147,7 @@ with tab_chat:
 
             if tts_enabled and reply:
                 with st.spinner("🔊 音声生成中…"):
-                    _tts_sid = _noah_speaker_from_mood(_reply_mood, speaker_id) if chat_characters[0].get("is_noah") else speaker_id
+                    _tts_sid = _speaker_from_mood(_reply_mood, chat_characters[0].get("styles", {}), speaker_id)
                     audio_data, audio_format, tts_error = generate_tts_for_char(reply, _tts_sid)
                     if audio_data:
                         st.session_state["last_audio"] = audio_data
