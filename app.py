@@ -1351,7 +1351,8 @@ with st.sidebar:
         char_info = speaker_data[selected_char]
         style_names = list(char_info["styles"].keys())
         default_style_idx = next((i for i, s in enumerate(style_names) if s == "ノーマル"), 0)
-        if len(style_names) > 1:
+        # Noahはスタイルをモード連動で自動切替するため手動選択不要
+        if len(style_names) > 1 and not char_info.get("is_noah"):
             selected_style = st.selectbox("スタイル", style_names, index=default_style_idx)
         else:
             selected_style = style_names[0]
