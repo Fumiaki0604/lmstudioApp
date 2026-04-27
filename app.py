@@ -60,7 +60,7 @@ _NOAH_MOOD_SPEAKER = {
     "sad": 888753765, "melancholy": 888753765,     # せつなめ
 }
 
-def _noah_speaker_from_mood(mood: str | None, default_id: int) -> int:
+def _noah_speaker_from_mood(mood, default_id: int) -> int:
     if not mood:
         return default_id
     return _NOAH_MOOD_SPEAKER.get(mood.lower(), default_id)
