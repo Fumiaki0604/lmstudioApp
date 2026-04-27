@@ -1,107 +1,55 @@
-# LM Studio App
+# lmstudio App
 
-LM Studioを使ったローカルLLMによるURL要約アプリケーション
+ローカルLLM（LM Studio）と OpenClaw Gateway を使ったキャラクターチャット・コンテンツ生成アプリ。
 
-## 概要
+## 機能概要
 
-このアプリケーションは、LM Studioで動作するローカルLLMを使用して、WebページのURLから本文を抽出し、要約を生成します。
+| タブ | 内容 |
+|------|------|
+| 💬 Chat（相棒） | 1対1 / 3人 / 4人のキャラクターチャット。TTS読み上げ対応 |
+| 📻 ニュースラジオ | RSSニュースをキャラクターが紹介・会話 |
+| 📝 note記事 | A2Aパイプラインによるnote.com記事自動生成 |
+| ⚙️ 設定 | TTS設定・システムプロンプト・note Cookie等 |
 
-## 機能
+## 主な仕様
 
-- **URL要約**: WebページのURLを入力すると、本文を抽出して要約を生成
-- **ローカルLLM**: LM Studioを使用して、プライバシーを保ちながら処理
-- **カスタマイズ可能**: 入力文字数、出力トークン数、Temperatureなどを調整可能
-- **リアルタイム接続確認**: LM Studioとの接続状態を常時表示
+### Chat（相棒）
+- **キャラクター**: VOICEVOX キャラ + Noah（OpenClaw Gateway経由、ChatGPT）
+- **TTS**: VOICEVOX（port 50021）/ AivisSpeech（port 10101）/ クラウドTTS
+- **MOOD連動スタイル切替**: LLMが `[MOOD:happy]` などを出力すると、対応する音声スタイルに自動切替
+  - `happy` → あまあま、`angry` → ツンツン、`sad` → なみだめ、`calm` → おちつき 等
+- **Noah専用機能**: OpenClaw ワークスペース記憶（IDENTITY/RELATIONSHIP/KNOWLEDGE/OBSERVATIONS.md）をシステムプロンプトに自動注入
 
-## ファイル構成
-
-- `app.py` - Streamlitベースのメインアプリケーション
-- `url_to_summary_lmstudio.py` - URL要約のスタンドアロン版
-- `smoke_test_lmstudio.py` - LM Studio接続テスト用スクリプト
-- `init/` - 初期化用ディレクトリ
+### note記事（A2Aパイプライン）
+- **役割**: 調査役 / 執筆役 / 編集役 / アドバイザー（Noah）
+- **HermesAgent連携**: `hermes -z` サブプロセスで学習・改善ループ（Hermes 4.3 36B使用）
+- **投稿**: note.com 非公式API経由でドラフト保存（cookie認証）
 
 ## セットアップ
 
-### 1. 依存パッケージのインストール
-
 ```bash
-# 仮想環境を作成（推奨）
 python -m venv .venv
-source .venv/bin/activate  # Windowsの場合: .venv\Scripts\activate
-
-# 依存パッケージをインストール
+source .venv/bin/activate
 pip install streamlit requests trafilatura
 ```
 
-### 2. LM Studioのセットアップ
-
-1. [LM Studio](https://lmstudio.ai/)をダウンロード・インストール
-2. お好みのモデルをダウンロード（例: `openai/gpt-oss-20b`）
-3. モデルをLoadし、Local ServerをRunningに設定
-4. デフォルトのポート（`http://localhost:1234/v1`）を確認
-
-## 使い方
-
-### メインアプリケーション（Streamlit版）
+### 必要なサービス
+- **LM Studio**: `http://localhost:1234/v1`（ローカルモデル用）
+- **VOICEVOX**: `http://localhost:50021`
+- **AivisSpeech**: `http://localhost:10101`（Noah用）
+- **OpenClaw Gateway**: `http://127.0.0.1:18789/v1`（Noah/ChatGPT用）
 
 ```bash
 streamlit run app.py
 ```
 
-ブラウザで開いたら：
+## ファイル構成
 
-1. サイドバーでLM Studioとの接続を確認
-2. モデルを選択
-3. 生成設定（入力文字数、出力トークン数、Temperature）を調整
-4. 要約したいURLを入力
-5. 「要約する」ボタンをクリック
-
-### スタンドアロン版
-
-```bash
-python url_to_summary_lmstudio.py
-```
-
-### 接続テスト
-
-```bash
-python smoke_test_lmstudio.py
-```
-
-## 設定パラメータ
-
-### 入力の最大文字数
-- **1000-2500**: 高速だが要点中心
-- **2500-4000**: バランスが良く普段使いに最適
-- **4000-6000**: 文脈をより詳細に把握
-- **6000-12000**: 最も詳細だが処理時間が長い
-
-### 出力トークン上限
-- **100-400**: 超短文（結論のみ）
-- **400-800**: 標準（読みやすい要約）
-- **800-1200**: 丁寧な要約
-- **1200-2000**: 詳細な要約
-
-### Temperature
-- **0.0-0.2**: 堅め・事実寄り
-- **0.2-0.6**: 自然でバランスが良い
-- **0.6-1.0**: 表現が豊か
-- **1.0-1.5**: 創造的だが不確実性が増す
-
-## トラブルシューティング
-
-### 接続エラー
-- LM Studioでモデルがロードされているか確認
-- Local Serverが起動しているか確認
-- ポート番号が正しいか確認（デフォルト: 1234）
-
-### 本文抽出失敗
-- JavaScriptでレンダリングされるページの場合、抽出できない可能性があります
-- その場合はPlaywright版への移行が必要です
-
-## ライセンス
-
-MIT License
+- `app.py` - メインアプリ（全機能）
+- `noah_config.json` - Noah のキャラクター設定
+- `speakers_all.json` - VOICEVOX/AivisSpeech 話者データキャッシュ
+- `icons/` - キャラクターアイコン
+- `~/.lmstudio_assistant/prompts.json` - システムプロンプト保存先
 
 ## 作者
 
