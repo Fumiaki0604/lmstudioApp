@@ -958,7 +958,7 @@ def note_draft_save(cookie: str, note_id: str, title: str, body: str) -> dict:
     r = requests.post(
         f"{NOTE_API_BASE}/text_notes/draft_save",
         params={"id": note_id, "is_temp_saved": "true"},
-        json={"title": title, "body": body, "is_paid": False, "status": "draft"},
+        json={"name": title, "body": body, "is_paid": False, "status": "draft"},
         headers=_note_headers(cookie),
         timeout=30,
     )
