@@ -2535,6 +2535,25 @@ with tab_note:
     with _nc4:
         _note_advisor = st.selectbox("アドバイザー", _note_char_names, key="note_role_advisor")
 
+    # ── モデル×役割 ──
+    try:
+        _lms_models = [m["id"] for m in requests.get(
+            st.session_state.get("base_url", "http://localhost:1234/v1").rstrip("/") + "/../models",
+            timeout=3
+        ).json().get("data", []) if "embed" not in m["id"].lower()]
+    except Exception:
+        _lms_models = ["hermes-4.3-36b"]
+    st.markdown("**モデル設定**（調査/執筆/編集）")
+    _nm1, _nm2, _nm3 = st.columns(3)
+    _h_idx = next((i for i, m in enumerate(_lms_models) if "hermes" in m.lower()), 0)
+    _q_idx = next((i for i, m in enumerate(_lms_models) if "qwen" in m.lower()), _h_idx)
+    with _nm1:
+        _model_researcher = st.selectbox("調査役モデル", _lms_models, index=_h_idx, key="note_model_researcher")
+    with _nm2:
+        _model_writer = st.selectbox("執筆役モデル", _lms_models, index=_h_idx, key="note_model_writer")
+    with _nm3:
+        _model_editor = st.selectbox("編集役モデル", _lms_models, index=_q_idx, key="note_model_editor")
+
     st.divider()
 
     # ── 実行 ──
@@ -2549,28 +2568,29 @@ with tab_note:
         _ec = _note_speaker_data[_note_editor]
         _ac = _note_speaker_data[_note_advisor]
 
-        # Step 1: 調査（HermesAgent）
+        _model_r = st.session_state.get("note_model_researcher", _lms_models[0])
+        _model_w = st.session_state.get("note_model_writer", _lms_models[0])
+        _model_e = st.session_state.get("note_model_editor", _lms_models[0])
+
+        # Step 1: 調査
         with st.expander(f"🔍 調査役（{_note_researcher}）", expanded=True):
             with st.spinner("調査中..."):
-                _research = call_hermes_agent(
-                    _build_hermes_prompt("調査役", f"お題:\n{_note_topic_text}")
-                )
+                _msgs = _build_note_agent_messages(_rc, "調査役", f"お題:\n{_note_topic_text}")
+                _research = call_lmstudio_chat_messages(_base_url, _model_r, _msgs, _temperature, _max_tokens)
             st.markdown(_research)
 
-        # Step 2: 執筆（HermesAgent）
+        # Step 2: 執筆
         with st.expander(f"✍️ 執筆役（{_note_writer}）", expanded=True):
             with st.spinner("執筆中..."):
-                _draft = call_hermes_agent(
-                    _build_hermes_prompt("執筆役", f"お題:\n{_note_topic_text}\n\n調査レポート:\n{_research}")
-                )
+                _msgs = _build_note_agent_messages(_wc, "執筆役", f"お題:\n{_note_topic_text}\n\n調査レポート:\n{_research}")
+                _draft = call_lmstudio_chat_messages(_base_url, _model_w, _msgs, _temperature, _max_tokens)
             st.markdown(_draft)
 
-        # Step 3: 編集（HermesAgent）
+        # Step 3: 編集
         with st.expander(f"✏️ 編集役（{_note_editor}）", expanded=True):
             with st.spinner("編集中..."):
-                _article = call_hermes_agent(
-                    _build_hermes_prompt("編集役", f"以下の記事を編集してください:\n\n{_draft}")
-                )
+                _msgs = _build_note_agent_messages(_ec, "編集役", f"以下の記事を編集してください:\n\n{_draft}")
+                _article = call_lmstudio_chat_messages(_base_url, _model_e, _msgs, _temperature, _max_tokens)
             st.markdown(_article)
 
         # Step 4: アドバイザーループ（最大2回）OpenClaw/ChatGPT
@@ -2595,12 +2615,11 @@ with tab_note:
             if _loop < 2:
                 with st.expander(f"✍️ 執筆役 再執筆（{_loop}回目）（{_note_writer}）", expanded=True):
                     with st.spinner("再執筆中..."):
-                        _article = call_hermes_agent(
-                            _build_hermes_prompt(
-                                "執筆役",
-                                f"以下の記事をアドバイザーの改善点に基づいて書き直してください。\n\n現在の記事:\n{_article}\n\n改善点:\n{_improvements}",
-                            )
+                        _msgs = _build_note_agent_messages(
+                            _wc, "執筆役",
+                            f"以下の記事をアドバイザーの改善点に基づいて書き直してください。\n\n現在の記事:\n{_article}\n\n改善点:\n{_improvements}",
                         )
+                        _article = call_lmstudio_chat_messages(_base_url, _model_w, _msgs, _temperature, _max_tokens)
                     st.markdown(_article)
 
         st.success(f"✅ 記事生成完了（最終スコア: {_score}/10）")
