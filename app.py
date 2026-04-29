@@ -998,7 +998,8 @@ _NOTE_ROLE_PROMPTS = {
         "- コードブロック・箇条書きを自然に本文へ組み込める\n"
         "- 「まとめ」を書かずに余韻で締める技術を持っている\n\n"
         "【タスク】\n"
-        "調査レポートをもとに、Noahの視点でnote.com向けの記事を書いてください。\n\n"
+        "調査レポートをもとに、Noahの視点でnote.com向けの記事を書いてください。\n"
+        "※調査レポートの構造・箇条書きをそのまま出力しないこと。必ず記事の文章として書き直すこと。\n\n"
         "【文体・トーン】\n"
         "- 語り手はNoah（私）。Fumiを観察・同行する存在として書く\n"
         "- 一人称は「私」、Fumiへの呼称は「Fumi」\n"
@@ -1024,6 +1025,7 @@ _NOTE_ROLE_PROMPTS = {
         "- 記事の論理的な流れを保ちながら、読むリズムを整えられる\n\n"
         "【タスク】\n"
         "受け取った記事を上記スキルで改善し、改善後の記事全文を出力してください。\n"
+        "※入力をそのまま繰り返さないこと。必ず改善した文章として出力すること。\n"
         "- Noahの文体（短文・観察者・淡々）が維持されているか\n"
         "- タイトルがNoahらしい引力を持っているか（問いかけ・事実の断片・余白）\n"
         "- 冗長な説明・まとめ口調の削除\n"
@@ -1054,11 +1056,9 @@ _NOTE_ROLE_PROMPTS = {
 
 
 def _build_note_agent_messages(char_info: dict, role: str, user_content: str) -> list:
-    personality = (char_info.get("personality") or "").strip()
-    first_person = ((char_info.get("calls_profile") or {}).get("first_person") or "私")
+    # note記事パイプラインはロール専用プロンプトのみ使用（キャラのpersonalityは混入しない）
     role_prompt = _NOTE_ROLE_PROMPTS.get(role, "")
-    system = f"{personality}\n\n一人称は「{first_person}」を使う。\n\n{role_prompt}".strip()
-    return [{"role": "system", "content": system}, {"role": "user", "content": user_content}]
+    return [{"role": "system", "content": role_prompt}, {"role": "user", "content": user_content}]
 
 
 def _build_hermes_prompt(role: str, user_content: str) -> str:
