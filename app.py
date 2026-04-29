@@ -1987,8 +1987,12 @@ with tab_chat:
         c_personality = char_info_dict.get("personality")
         c_gender = char_info_dict.get("gender")
         c_calls = char_info_dict.get("calls_profile") or {}
-        # キャラ独自のpersonalityがあればバディプロンプトは使わない
-        sys = c_personality if c_personality else current_buddy_prompt()
+        char_name = char_info_dict.get("name", "")
+        if c_personality:
+            # キャラ名を明示してから性格を提示
+            sys = f"あなたは「{char_name}」です。以下の性格・口調で返答してください。\n\n{c_personality}"
+        else:
+            sys = current_buddy_prompt()
         now = datetime.now(ZoneInfo("Asia/Tokyo"))
         weekdays = ["月", "火", "水", "木", "金", "土", "日"]
         today_str = now.strftime("%Y年%m月%d日") + f"（{weekdays[now.weekday()]}）"
