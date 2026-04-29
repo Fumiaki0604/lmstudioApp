@@ -2537,25 +2537,6 @@ with tab_note:
     with _nc4:
         _note_advisor = st.selectbox("アドバイザー", _note_char_names, key="note_role_advisor")
 
-    # ── モデル×役割 ──
-    try:
-        _lms_base = st.session_state.get("base_url", "http://localhost:1234/v1").rstrip("/")
-        _lms_models = [m["id"] for m in requests.get(
-            _lms_base + "/models", timeout=3
-        ).json().get("data", []) if "embed" not in m["id"].lower()]
-    except Exception:
-        _lms_models = ["hermes-4.3-36b"]
-    st.markdown("**モデル設定**（調査/執筆/編集）")
-    _nm1, _nm2, _nm3 = st.columns(3)
-    _h_idx = next((i for i, m in enumerate(_lms_models) if "hermes" in m.lower()), 0)
-    _q_idx = next((i for i, m in enumerate(_lms_models) if "qwen" in m.lower()), _h_idx)
-    with _nm1:
-        _model_researcher = st.selectbox("調査役モデル", _lms_models, index=_h_idx, key="note_model_researcher")
-    with _nm2:
-        _model_writer = st.selectbox("執筆役モデル", _lms_models, index=_h_idx, key="note_model_writer")
-    with _nm3:
-        _model_editor = st.selectbox("編集役モデル", _lms_models, index=_q_idx, key="note_model_editor")
-
     st.divider()
 
     # ── 実行 ──
@@ -2570,9 +2551,8 @@ with tab_note:
         _ec = _note_speaker_data[_note_editor]
         _ac = _note_speaker_data[_note_advisor]
 
-        _model_r = st.session_state.get("note_model_researcher", _lms_models[0])
-        _model_w = st.session_state.get("note_model_writer", _lms_models[0])
-        _model_e = st.session_state.get("note_model_editor", _lms_models[0])
+        _note_model = st.session_state.get("model", "hermes-4.3-36b")
+        _model_r = _model_w = _model_e = _note_model
 
         # Step 1: 調査
         with st.expander(f"🔍 調査役（{_note_researcher}）", expanded=True):
