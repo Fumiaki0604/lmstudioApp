@@ -938,7 +938,9 @@ _NOTE_HEADERS = {
 
 
 def _note_headers(cookie: str) -> dict:
-    return {**_NOTE_HEADERS, "Cookie": cookie}
+    # cookie が値のみの場合はキー名を補完する
+    cookie_str = cookie if cookie.startswith("_note_session_v5=") else f"_note_session_v5={cookie}"
+    return {**_NOTE_HEADERS, "Cookie": cookie_str}
 
 
 def note_create_note(cookie: str) -> str:
