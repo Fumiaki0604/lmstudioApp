@@ -2576,21 +2576,21 @@ with tab_note:
         with st.expander(f"🔍 調査役（{_note_researcher}）", expanded=True):
             with st.spinner("調査中..."):
                 _msgs = _build_note_agent_messages(_rc, "調査役", f"お題:\n{_note_topic_text}")
-                _research = call_lmstudio_chat_messages(_base_url, _model_r, _msgs, _temperature, _max_tokens)
+                _research = call_lmstudio_chat_messages(_base_url, _model_r, _msgs, _temperature, _max_tokens, 300)
             st.markdown(_research)
 
         # Step 2: 執筆
         with st.expander(f"✍️ 執筆役（{_note_writer}）", expanded=True):
             with st.spinner("執筆中..."):
                 _msgs = _build_note_agent_messages(_wc, "執筆役", f"お題:\n{_note_topic_text}\n\n調査レポート:\n{_research}")
-                _draft = call_lmstudio_chat_messages(_base_url, _model_w, _msgs, _temperature, _max_tokens)
+                _draft = call_lmstudio_chat_messages(_base_url, _model_w, _msgs, _temperature, _max_tokens, 300)
             st.markdown(_draft)
 
         # Step 3: 編集
         with st.expander(f"✏️ 編集役（{_note_editor}）", expanded=True):
             with st.spinner("編集中..."):
                 _msgs = _build_note_agent_messages(_ec, "編集役", f"以下の記事を編集してください:\n\n{_draft}")
-                _article = call_lmstudio_chat_messages(_base_url, _model_e, _msgs, _temperature, _max_tokens)
+                _article = call_lmstudio_chat_messages(_base_url, _model_e, _msgs, _temperature, _max_tokens, 300)
             st.markdown(_article)
 
         # Step 4: アドバイザーループ（最大2回）OpenClaw/ChatGPT
@@ -2619,7 +2619,7 @@ with tab_note:
                             _wc, "執筆役",
                             f"以下の記事をアドバイザーの改善点に基づいて書き直してください。\n\n現在の記事:\n{_article}\n\n改善点:\n{_improvements}",
                         )
-                        _article = call_lmstudio_chat_messages(_base_url, _model_w, _msgs, _temperature, _max_tokens)
+                        _article = call_lmstudio_chat_messages(_base_url, _model_w, _msgs, _temperature, _max_tokens, 300)
                     st.markdown(_article)
 
         st.success(f"✅ 記事生成完了（最終スコア: {_score}/10）")
