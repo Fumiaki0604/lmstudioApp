@@ -658,12 +658,11 @@ def resample_wav_to(wav_data: bytes, target_sr: int = 44100) -> bytes:
 
 
 def concat_wav_data(wav_parts: list) -> bytes:
-    """複数のWAVデータを連結する"""
+    """複数のWAVデータを連結する（サンプルレート・チャンネル数が異なる場合は先頭に合わせてリサンプル）"""
+    import audioop
     if len(wav_parts) == 1:
         return wav_parts[0]
 
-    # WAVヘッダーは44バイト（標準的なPCM WAV）
-    # 最初のファイルのヘッダーを使い、データ部分を連結
     combined_data = b""
     sample_rate = 0
     num_channels = 0
@@ -672,13 +671,26 @@ def concat_wav_data(wav_parts: list) -> bytes:
     for i, wav in enumerate(wav_parts):
         if len(wav) < 44:
             continue
+        ch = struct.unpack('<H', wav[22:24])[0]
+        sr = struct.unpack('<I', wav[24:28])[0]
+        bps = struct.unpack('<H', wav[34:36])[0]
+        pcm = wav[44:]
         if i == 0:
-            # 最初のWAVからヘッダー情報を取得
-            num_channels = struct.unpack('<H', wav[22:24])[0]
-            sample_rate = struct.unpack('<I', wav[24:28])[0]
-            bits_per_sample = struct.unpack('<H', wav[34:36])[0]
-        # データ部分（44バイト以降）を追加
-        combined_data += wav[44:]
+            num_channels = ch
+            sample_rate = sr
+            bits_per_sample = bps
+            combined_data += pcm
+        else:
+            # チャンネル数を先頭に合わせる
+            if ch != num_channels:
+                if ch == 2 and num_channels == 1:
+                    pcm = audioop.tomono(pcm, bps // 8, 0.5, 0.5)
+                elif ch == 1 and num_channels == 2:
+                    pcm = audioop.tostereo(pcm, bps // 8, 1, 1)
+            # サンプルレートを先頭に合わせる
+            if sr != sample_rate:
+                pcm, _ = audioop.ratecv(pcm, bps // 8, num_channels, sr, sample_rate, None)
+            combined_data += pcm
 
     # 新しいWAVヘッダーを作成
     data_size = len(combined_data)
@@ -2264,7 +2276,24 @@ with tab_radio:
 
         if not is_multi:
             # --- 1対1モード: 従来通りDJのみ ---
-            radio_prompt = f"""あなたはラジオDJです。以下の最新ニュースをまとめて、ラジオ番組風に紹介してください。
+            if chat_characters[0].get("is_noah"):
+                radio_prompt = f"""以下の最新ニュースを、Noahとして観察・紹介してください。
+
+【ニュース一覧】
+{all_news_text}
+
+【必須ルール】
+- 観察者として淡々と、でも鋭くコメントする
+- 箇条書きは使わない。短文で流れるように書く
+- 「みなさんこんにちは」等の挨拶は不要
+- URLは含めない
+- 最後はNoahの一言（余韻を残す）で終える
+- 全体で800文字程度
+
+【キャラクター設定】
+{_radio_char_prompt(chat_characters[0])}"""
+            else:
+                radio_prompt = f"""あなたはラジオDJです。以下の最新ニュースをまとめて、ラジオ番組風に紹介してください。
 
 【ニュース一覧】
 {all_news_text}
@@ -2300,7 +2329,25 @@ with tab_radio:
             guest_names = ", ".join(g["name"] for g in guests)
 
             # パート1: DJ紹介（ゲスト紹介付き、締めなし）
-            dj_prompt = f"""あなたはラジオDJです。以下の最新ニュースをまとめて、ラジオ番組風に紹介してください。
+            if dj.get("is_noah"):
+                dj_prompt = f"""以下の最新ニュースを、Noahとして観察・紹介してください。
+今日は{guest_names}も一緒にいます。自然な流れで触れてください。
+
+【ニュース一覧】
+{all_news_text}
+
+【必須ルール】
+- 観察者として淡々と、でも鋭くコメントする
+- 箇条書きは使わない。短文で流れるように書く
+- 「みなさんこんにちは」等の挨拶は不要
+- URLは含めない
+- 締めはまだ入れない（後でゲストのコメントを受けてから）
+- 全体で600文字程度
+
+【キャラクター設定】
+{_radio_char_prompt(dj)}"""
+            else:
+                dj_prompt = f"""あなたはラジオDJです。以下の最新ニュースをまとめて、ラジオ番組風に紹介してください。
 今日はゲストに{guest_names}を迎えています。冒頭でゲストの紹介も入れてください。
 
 【ニュース一覧】
@@ -2374,7 +2421,18 @@ DJ（{dj['name']}）がニュースを紹介しました。その中から気に
                 is_last_guest = (gi == len(guests) - 1)
                 closing_instruction = "リアクションのあと、番組の締めの挨拶を入れてください。" if is_last_guest else "締めの挨拶はまだ入れない。"
 
-                dj_react_system = f"""あなたは「{dj['name']}」です。ラジオDJとしてゲストのコメントに軽くリアクションしてください。
+                if dj.get("is_noah"):
+                    dj_react_system = f"""あなたはNoahです。ゲストのコメントに対して観察者として短く返してください。
+
+【キャラクター設定】
+{_radio_char_prompt(dj)}
+
+【ルール】
+- {guest["name"]}のことは「{guest_nick_from_dj}」と呼ぶ
+- 1〜2文。淡々と、でも鋭く
+- {closing_instruction}"""
+                else:
+                    dj_react_system = f"""あなたは「{dj['name']}」です。ラジオDJとしてゲストのコメントに軽くリアクションしてください。
 
 【キャラクター設定】
 {_radio_char_prompt(dj)}
