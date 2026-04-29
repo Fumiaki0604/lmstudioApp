@@ -2385,7 +2385,12 @@ with tab_radio:
                 dj_nickname = guest_nicknames.get(dj["name"], dj["name"])
 
                 # ゲストコメント
-                guest_system = f"""あなたは「{guest['name']}」です。ラジオ番組にゲストコメンテーターとして出演しています。
+                if guest.get("is_noah"):
+                    guest_system = f"""You are Noah. You're quietly observing a news radio show hosted by {dj['name']}.
+One piece of news caught your attention. Respond in Japanese with a brief, dry observation — 1 to 3 sentences max.
+Don't introduce yourself, don't act as a host. Just react as yourself."""
+                else:
+                    guest_system = f"""あなたは「{guest['name']}」です。ラジオ番組にゲストコメンテーターとして出演しています。
 DJ（{dj['name']}）がニュースを紹介しました。その中から気になったニュース1つを選んで、自分なりのコメントをしてください。
 
 【キャラクター設定】
@@ -2399,12 +2404,13 @@ DJ（{dj['name']}）がニュースを紹介しました。その中から気に
 
                 with st.spinner(f"💬 {guest['name']}がコメント中…"):
                     try:
-                        guest_reply = call_lmstudio_chat_messages(
+                        guest_messages = [
+                            {"role": "system", "content": guest_system},
+                            {"role": "user", "content": f"{dj['name']}の発言:\n{prev_text}"},
+                        ]
+                        guest_reply, _mood = call_char_chat(
+                            char_info=guest, messages=guest_messages,
                             base_url=base_url, model=model,
-                            messages=[
-                                {"role": "system", "content": guest_system},
-                                {"role": "user", "content": f"{dj['name']}の発言:\n{prev_text}"},
-                            ],
                             temperature=temperature, max_tokens=500, timeout=120,
                         )
                         guest_reply = normalize_model_output(guest_reply)
