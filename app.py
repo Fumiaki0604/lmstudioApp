@@ -2537,9 +2537,9 @@ with tab_note:
 
     # ── モデル×役割 ──
     try:
+        _lms_base = st.session_state.get("base_url", "http://localhost:1234/v1").rstrip("/")
         _lms_models = [m["id"] for m in requests.get(
-            st.session_state.get("base_url", "http://localhost:1234/v1").rstrip("/") + "/../models",
-            timeout=3
+            _lms_base + "/models", timeout=3
         ).json().get("data", []) if "embed" not in m["id"].lower()]
     except Exception:
         _lms_models = ["hermes-4.3-36b"]
