@@ -1130,7 +1130,9 @@ def call_lmstudio_chat_messages(
     }
     r = requests.post(endpoint, json=payload, timeout=timeout)
     r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    msg = r.json()["choices"][0]["message"]
+    # Qwen3等のThinkingモデルはcontentが空でreasoning_contentに本文が入る
+    return msg.get("content") or msg.get("reasoning_content") or ""
 
 
 _OPENCLAW_WORKSPACE = Path.home() / ".openclaw" / "workspace"
