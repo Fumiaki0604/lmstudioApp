@@ -2092,8 +2092,8 @@ with tab_chat:
 - ユーザーには一切話しかけず、{' と '.join(other_names)}に向けて話すこと。ユーザーへの呼びかけ・返答は禁止。
 - 会話の相手は{' と '.join(other_names)}のみ。（話題提供）と書かれたメッセージは会話のきっかけであり、ユーザーへの返答は不要。
 【絶対厳守】あなたは「{char_name}」です。自分の返答だけを出力すること。他のキャラの返答は絶対に書かないこと。【キャラ名】のような表記も使わないこと。
-{f'- 一人称は必ず「{c_fp}」を使うこと。他のキャラの一人称は絶対に使わないこと。' if c_fp else ''}
-【繰り返し禁止】自分が直前のターンで言ったことを同じ表現・同じ内容で繰り返すことは絶対にしないこと。新しい観点・感情・情報・質問を必ず加えること。
+{f'- 一人称は必ず「{c_fp}」を使うこと。他のキャラの一人称は絶対に使わないこと。' if c_fp else ''}{f'- 自分のことを「{char_name}」と三人称で呼ばないこと。自分を指す場合は必ず「{c_fp}」を使うこと。' if c_fp else f'- 自分のことを「{char_name}」と三人称で呼ばないこと。'}
+【繰り返し禁止】直前に誰かが言ったことをそのままなぞることは絶対にしないこと。自分の独自の感想・視点・新情報だけを話すこと。他キャラの発言を「そうだね」と受けて繰り返すだけの返答は禁止。
 【呼び名ルール（厳守）】
 {nickname_lines if nickname_lines else ''}- 他のキャラの口調・一人称・二人称を絶対に真似しないでください。自分のキャラクター設定だけに忠実に話してください。"""
 
@@ -2107,8 +2107,9 @@ with tab_chat:
                 elif cn == char_name:
                     history.append({"role": "assistant", "content": m["content"]})
                 elif cn:
-                    # 他キャラの発言: 口調が伝染しないよう要点だけ伝える
-                    history.append({"role": "user", "content": f"（{cn}が以下の趣旨の発言をしました）: {m['content']}"})
+                    # 他キャラの発言: 要点のみ渡してecho・口調伝染を抑制
+                    summary = m['content'][:120] + "…" if len(m['content']) > 120 else m['content']
+                    history.append({"role": "user", "content": f"（{cn}の発言）{summary}"})
                 else:
                     history.append({"role": "assistant", "content": m["content"]})
             messages = [{"role": "system", "content": system}] + history
