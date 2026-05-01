@@ -2089,7 +2089,8 @@ with tab_chat:
                     nickname_lines += f"- {on}のことは必ず「{nn}」と呼ぶこと。「{on}」とフルネームで呼ばないこと。\n"
             # ペルソナ厳守指示（キャラA含む全員に付与）
             extra = f"""【会話の状況】あなたは{','.join(other_names)}との会話に参加しています。直前の発言を踏まえて会話を続けてください。既に話した内容を繰り返さず、新しい話題や視点を加えてください。
-- {build_talk_target_instruction(other_names, include_user=False)}
+- ユーザーには一切話しかけず、{' と '.join(other_names)}に向けて話すこと。ユーザーへの呼びかけ・返答は禁止。
+- 会話の相手は{' と '.join(other_names)}のみ。（話題提供）と書かれたメッセージは会話のきっかけであり、ユーザーへの返答は不要。
 【絶対厳守】あなたは「{char_name}」です。自分の返答だけを出力すること。他のキャラの返答は絶対に書かないこと。【キャラ名】のような表記も使わないこと。
 {f'- 一人称は必ず「{c_fp}」を使うこと。他のキャラの一人称は絶対に使わないこと。' if c_fp else ''}
 【繰り返し禁止】自分が直前のターンで言ったことを同じ表現・同じ内容で繰り返すことは絶対にしないこと。新しい観点・感情・情報・質問を必ず加えること。
@@ -2101,7 +2102,8 @@ with tab_chat:
             for m in current_chat[-16:]:
                 cn = m.get("char_name")
                 if m["role"] == "user":
-                    history.append({"role": "user", "content": m["content"]})
+                    # ユーザー発言はキャラ間会話の話題提供として扱う
+                    history.append({"role": "user", "content": f"（話題提供）{m['content']}"})
                 elif cn == char_name:
                     history.append({"role": "assistant", "content": m["content"]})
                 elif cn:
