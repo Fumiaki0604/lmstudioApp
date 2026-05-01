@@ -2737,66 +2737,6 @@ with tab_settings:
         st.session_state["temperature"] = new_temperature
 
     st.divider()
-    st.subheader("相棒プロンプト（保存・切替）")
-    st.caption("ここでだけ編集できます。Chat/URL要約画面には表示しません。")
-
-    store = st.session_state["prompt_store"]
-    prompts = store.get("prompts", {})
-    if not prompts:
-        store = _default_store()
-        prompts = store["prompts"]
-        st.session_state["prompt_store"] = store
-        save_store(store)
-
-    names = sorted(prompts.keys())
-    active = store.get("active", names[0])
-
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        selected = st.selectbox("プリセット選択", options=names, index=names.index(active) if active in names else 0)
-    with col2:
-        if st.button("✅ このプリセットを使う"):
-            store["active"] = selected
-            st.session_state["prompt_store"] = store
-            save_store(store)
-            st.success(f"適用しました: {selected}")
-
-    st.divider()
-    st.subheader("プリセット管理")
-
-    colN1, colN2, colN3 = st.columns([2, 1, 1])
-    with colN1:
-        new_name = st.text_input("新しいプリセット名", placeholder="例: buddy_casual / buddy_strict")
-    with colN2:
-        if st.button("➕ 新規作成"):
-            nn = (new_name or "").strip()
-            if not nn:
-                st.warning("プリセット名を入力してください。")
-            elif nn in prompts:
-                st.warning("同名のプリセットが既にあります。")
-            else:
-                prompts[nn] = DEFAULT_BUDDY_PROMPT
-                store["prompts"] = prompts
-                store["active"] = nn
-                st.session_state["prompt_store"] = store
-                save_store(store)
-                st.success(f"作成して適用しました: {nn}")
-                st.rerun()
-    with colN3:
-        if st.button("🗑 選択プリセット削除"):
-            if selected == "default":
-                st.warning("default は削除できません。")
-            else:
-                prompts.pop(selected, None)
-                store["prompts"] = prompts
-                if store.get("active") == selected:
-                    store["active"] = "default" if "default" in prompts else next(iter(prompts.keys()))
-                st.session_state["prompt_store"] = store
-                save_store(store)
-                st.success(f"削除しました: {selected}")
-                st.rerun()
-
-    st.divider()
     st.subheader("🔑 API設定")
 
     app_settings = st.session_state["app_settings"]
