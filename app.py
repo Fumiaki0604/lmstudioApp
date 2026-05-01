@@ -1998,7 +1998,7 @@ with tab_chat:
         st.session_state["stt_text"] = ""
 
     # --- システムプロンプト構築用ヘルパー ---
-    def build_system_prompt(char_info_dict, extra=""):
+    def build_system_prompt(char_info_dict, extra="", continue_mode=False):
         """キャラ情報dictからシステムプロンプトを構築"""
         c_personality = char_info_dict.get("personality")
         c_gender = char_info_dict.get("gender")
@@ -2027,7 +2027,10 @@ with tab_chat:
             cat_news_text = get_news_for_category(current_cat)
             if cat_news_text:
                 sys += f"\n\n【{current_cat}の最新ニュース】\n{cat_news_text}"
-                sys += f"\n\n【会話の焦点】ユーザーは「{current_cat}」に関する話題に興味があります。この分野のニュースについて詳しく解説・議論してください。"
+                if continue_mode:
+                    sys += f"\n\n【会話の焦点】「{current_cat}」について既に会話が始まっています。ニュースを最初から紹介し直さず、これまでの会話の流れを踏まえて話題を深めるか広げてください。"
+                else:
+                    sys += f"\n\n【会話の焦点】ユーザーは「{current_cat}」に関する話題に興味があります。この分野のニュースについて詳しく解説・議論してください。"
         if tts_enabled and tts_mode == "cloud":
             sys += "\n\n【重要】音声読み上げモードです。返答は簡潔に、3〜4文程度（150文字以内）でまとめてください。"
         if c_gender:
@@ -2068,7 +2071,7 @@ with tab_chat:
             ad, te = synthesize_voice_full(tts_text, char_speaker_id, api_key=tts_key)
             return ad, "mp3", te
 
-    def run_multi_char_round(chat_characters, current_chat, base_url, model, temperature, max_tokens, tts_enabled):
+    def run_multi_char_round(chat_characters, current_chat, base_url, model, temperature, max_tokens, tts_enabled, continue_mode=False):
         """複数キャラの1ラウンド分の応答を生成"""
         audio_queue = []
         for idx, char in enumerate(chat_characters):
@@ -2093,7 +2096,7 @@ with tab_chat:
 【呼び名ルール（厳守）】
 {nickname_lines if nickname_lines else ''}- 他のキャラの口調・一人称・二人称を絶対に真似しないでください。自分のキャラクター設定だけに忠実に話してください。"""
 
-            system = build_system_prompt(char, extra=extra)
+            system = build_system_prompt(char, extra=extra, continue_mode=continue_mode)
             history = []
             for m in current_chat[-16:]:
                 cn = m.get("char_name")
@@ -2189,7 +2192,7 @@ with tab_chat:
         last_msg = current_chat[-1] if current_chat else {}
         if last_msg.get("role") == "assistant" and last_msg.get("char_name"):
             if st.button("🔄 会話を続ける", key="ai_continue"):
-                run_multi_char_round(chat_characters, current_chat, base_url, model, temperature, max_tokens, tts_enabled)
+                run_multi_char_round(chat_characters, current_chat, base_url, model, temperature, max_tokens, tts_enabled, continue_mode=True)
                 st.rerun()
 
     # ボタン群（新規会話・エクスポート）
