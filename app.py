@@ -1278,6 +1278,8 @@ def normalize_model_output(text: str) -> str:
         .replace("<br>", "\n")
         .replace("&nbsp;", " ")
     )
+    # 途中に残ったMOODタグを除去（先頭はcall_char_chatで処理済み、途中残りを掃除）
+    text = re.sub(r"\[MOOD:[^\]]+\]\s*", "", text)
     # LLMが付与するメタコメント行を除去
     lines = text.split("\n")
     lines = [l for l in lines if not re.match(r"^(\**)?\s*(Note|注|補足|※補足)\s*[:：]", l)]
@@ -2367,9 +2369,10 @@ with tab_radio:
 
             with st.spinner(f"📻 {dj['name']}がニュースを紹介中…"):
                 try:
-                    dj_reply = call_lmstudio_chat_messages(
+                    dj_messages = [{"role": "user", "content": dj_prompt}]
+                    dj_reply, _ = call_char_chat(
+                        char_info=dj, messages=dj_messages,
                         base_url=base_url, model=model,
-                        messages=[{"role": "user", "content": dj_prompt}],
                         temperature=temperature, max_tokens=1500, timeout=300,
                     )
                     dj_reply = normalize_model_output(dj_reply)
@@ -2450,12 +2453,13 @@ DJ（{dj['name']}）がニュースを紹介しました。その中から気に
 
                 with st.spinner(f"📻 {dj['name']}がリアクション中…"):
                     try:
-                        dj_react = call_lmstudio_chat_messages(
+                        dj_react_messages = [
+                            {"role": "system", "content": dj_react_system},
+                            {"role": "user", "content": f"{guest['name']}のコメント:\n{guest_reply}"},
+                        ]
+                        dj_react, _ = call_char_chat(
+                            char_info=dj, messages=dj_react_messages,
                             base_url=base_url, model=model,
-                            messages=[
-                                {"role": "system", "content": dj_react_system},
-                                {"role": "user", "content": f"{guest['name']}のコメント:\n{guest_reply}"},
-                            ],
                             temperature=temperature, max_tokens=300, timeout=120,
                         )
                         dj_react = normalize_model_output(dj_react)
@@ -2756,37 +2760,6 @@ with tab_settings:
             st.session_state["prompt_store"] = store
             save_store(store)
             st.success(f"適用しました: {selected}")
-
-    edit_key = f"prompt_edit_{selected}"
-    if edit_key not in st.session_state:
-        st.session_state[edit_key] = prompts.get(selected, "").strip()
-
-    edited = st.text_area(
-        "プロンプト本文（ここで編集）",
-        value=st.session_state[edit_key],
-        height=260,
-    )
-
-    cA, cB, cC = st.columns([1, 1, 2])
-    with cA:
-        if st.button("💾 上書き保存"):
-            prompts[selected] = edited.strip()
-            store["prompts"] = prompts
-            st.session_state["prompt_store"] = store
-            save_store(store)
-            st.success("保存しました。")
-
-    with cB:
-        if st.button("↩︎ デフォルトに戻す"):
-            prompts[selected] = DEFAULT_BUDDY_PROMPT
-            store["prompts"] = prompts
-            st.session_state["prompt_store"] = store
-            save_store(store)
-            st.session_state[edit_key] = DEFAULT_BUDDY_PROMPT
-            st.success("デフォルトに戻して保存しました。")
-
-    with cC:
-        st.caption(f"保存先: `{PROMPTS_FILE}`")
 
     st.divider()
     st.subheader("プリセット管理")
