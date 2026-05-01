@@ -2107,9 +2107,8 @@ with tab_chat:
                 elif cn == char_name:
                     history.append({"role": "assistant", "content": m["content"]})
                 elif cn:
-                    # 他キャラの発言: 要点のみ渡してecho・口調伝染を抑制
-                    summary = m['content'][:120] + "…" if len(m['content']) > 120 else m['content']
-                    history.append({"role": "user", "content": f"（{cn}の発言）{summary}"})
+                    # 他キャラの発言: 全文を渡しつつecho防止の注釈を付ける
+                    history.append({"role": "user", "content": f"（{cn}の発言 ※この内容をそのまま繰り返さないこと）{m['content']}"})
                 else:
                     history.append({"role": "assistant", "content": m["content"]})
             messages = [{"role": "system", "content": system}] + history
