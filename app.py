@@ -5,11 +5,31 @@ import base64
 import struct
 import uuid
 import re
+import threading
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Optional
+
+# 自律会話: バックグラウンドスレッド管理
+_AUTO_LOG_FILE = Path.home() / ".lmstudio_assistant" / "auto_chat_log.json"
+_auto_generating = False
+_auto_gen_lock = threading.Lock()
+
+
+def _auto_load_log():
+    if _AUTO_LOG_FILE.exists():
+        try:
+            return json.loads(_AUTO_LOG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return []
+    return []
+
+
+def _auto_save_log(entries):
+    _AUTO_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    _AUTO_LOG_FILE.write_text(json.dumps(entries[-200:], ensure_ascii=False), encoding="utf-8")
 
 import requests
 import trafilatura
@@ -1589,9 +1609,10 @@ if not lm_ok:
 
 model = st.selectbox("使用モデル", models)
 
-# autorefresh: 自律会話が動作中のときだけ5秒ごとにリロード（タブ外で定義する必要あり）
-if st.session_state.get("auto_running"):
-    st_autorefresh(interval=5000, key="auto_refresh_tick")
+# autorefresh: 常時マウント（タブ切替時の再マウントによるタブリセットを防ぐため）
+# running時は10秒ごと、停止時も30秒ごとに保持（unmount→remountを避ける）
+_auto_refresh_interval = 10000 if st.session_state.get("auto_running") else 30000
+st_autorefresh(interval=_auto_refresh_interval, key="auto_refresh_tick")
 
 tab_chat, tab_radio, tab_auto, tab_note, tab_settings = st.tabs(["💬 Chat（相棒）", "📻 ニュースラジオ", "🏠 自律会話", "📝 note記事", "⚙️ 設定"])
 
@@ -2650,65 +2671,79 @@ with tab_auto:
         with col_clear:
             if st.button("🗑 ログクリア"):
                 st.session_state["auto_log"] = []
+                _auto_save_log([])
 
-        st.caption(f"参加キャラ: {len(auto_all_chars)}人 / next={int(st.session_state['auto_next_time'] - time.time())}秒後 / running={st.session_state['auto_running']}")
+        st.caption(f"参加キャラ: {len(auto_all_chars)}人 / next={int(st.session_state['auto_next_time'] - time.time())}秒後 / 生成中={_auto_generating}")
 
-        # 自律発言生成
-        if st.session_state["auto_running"] and time.time() >= st.session_state["auto_next_time"]:
+        # 自律発言生成（バックグラウンドスレッド）
+        if st.session_state["auto_running"] and not _auto_generating and time.time() >= st.session_state["auto_next_time"]:
             import random
-            # LLM呼び出し前にnext_timeを更新（呼び出し中のautorefreshで再トリガーされないよう）
-            st.session_state["auto_next_time"] = time.time() + random.randint(30, 90)
-            speaker = random.choice(auto_all_chars)
-            char_name = speaker["name"]
-            c_calls = speaker.get("calls_profile") or {}
-            c_fp = c_calls.get("first_person") or ""
-            c_personality = speaker.get("personality") or "フレンドリー"
 
-            recent = st.session_state["auto_log"][-6:]
-            history_text = "\n".join([f"{m['name']}: {m['text']}" for m in recent]) if recent else "（会話開始）"
+            def _auto_gen_thread(speaker, all_chars, b_url, mdl):
+                global _auto_generating
+                try:
+                    _cname = speaker["name"]
+                    _fp = (speaker.get("calls_profile") or {}).get("first_person") or ""
+                    _personality = speaker.get("personality") or "フレンドリー"
+                    _others = [c["name"] for c in all_chars if c["name"] != _cname]
+                    _log = _auto_load_log()
+                    _recent = _log[-6:]
+                    _hist = "\n".join([f"{m['name']}: {m['text']}" for m in _recent]) if _recent else "（会話開始）"
+                    _sys = f"""あなたは「{_cname}」です。以下の性格・口調で話してください。
+{_personality}
+{f'一人称: 「{_fp}」' if _fp else ''}
 
-            other_names = [c["name"] for c in auto_all_chars if c["name"] != char_name]
-            auto_system = f"""あなたは「{char_name}」です。以下の性格・口調で話してください。
-{c_personality}
-{f'一人称: 「{c_fp}」' if c_fp else ''}
-
-【状況】他のキャラクター（{' / '.join(other_names)}）と自由に雑談しています。
+【状況】他のキャラクター（{' / '.join(_others)}）と自由に雑談しています。
 【ルール】
 - 1〜3文程度の短い発言のみ
 - ユーザーへの呼びかけは不要
 - 直前の発言から1点だけ拾って反応するか、新しい話題を振る
 - 記事や他者の言葉をそのまま繰り返さない
-- 自分のことを「{char_name}」と三人称で呼ばない{f'。必ず「{c_fp}」を使う' if c_fp else ''}"""
-
-            auto_messages = [
-                {"role": "system", "content": auto_system},
-                {"role": "user", "content": f"直近の会話:\n{history_text}\n\n{char_name}として次の一言を話してください。"},
-            ]
-            try:
-                reply, _ = call_char_chat(
-                    char_info=speaker, messages=auto_messages,
-                    base_url=base_url, model=model,
-                    temperature=0.8, max_tokens=150, timeout=60,
-                )
-                reply = normalize_model_output(reply)
-                if reply:
-                    st.session_state["auto_log"].append({
-                        "name": char_name,
-                        "text": reply,
+- 自分のことを「{_cname}」と三人称で呼ばない{f'。必ず「{_fp}」を使う' if _fp else ''}"""
+                    _msgs = [
+                        {"role": "system", "content": _sys},
+                        {"role": "user", "content": f"直近の会話:\n{_hist}\n\n{_cname}として次の一言を話してください。"},
+                    ]
+                    if speaker.get("is_noah"):
+                        _reply, _ = call_noah_chat(_msgs, timeout=120)
+                    else:
+                        _raw = call_lmstudio_chat_messages(b_url, mdl, _msgs, 0.8, 150, timeout=120)
+                        _m = re.match(r"^\[MOOD:[^\]]+\]\s*", _raw)
+                        _reply = _raw[_m.end():] if _m else _raw
+                    _reply = normalize_model_output(_reply)
+                    if _reply:
+                        _log = _auto_load_log()
+                        _log.append({
+                            "name": _cname,
+                            "text": _reply,
+                            "time": datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M"),
+                            "icon": speaker.get("icon", ""),
+                        })
+                        _auto_save_log(_log)
+                except Exception as e:
+                    _log = _auto_load_log()
+                    _log.append({
+                        "name": "⚠️ エラー",
+                        "text": f"{speaker.get('name','?')}: {e}",
                         "time": datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M"),
-                        "icon": speaker.get("icon", ""),
+                        "icon": "",
                     })
-            except Exception as e:
-                st.session_state["auto_log"].append({
-                    "name": "⚠️ エラー",
-                    "text": f"{char_name}: {e}",
-                    "time": datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M"),
-                    "icon": "",
-                })
+                    _auto_save_log(_log)
+                finally:
+                    _auto_generating = False
 
+            # next_timeとフラグを先に更新してから起動
+            st.session_state["auto_next_time"] = time.time() + random.randint(30, 90)
+            _auto_generating = True
+            _t = threading.Thread(
+                target=_auto_gen_thread,
+                args=(random.choice(auto_all_chars), auto_all_chars, base_url, model),
+                daemon=True,
+            )
+            _t.start()
 
-        # ログ表示
-        auto_log = st.session_state["auto_log"]
+        # ログ表示（ファイルから読み込み）
+        auto_log = _auto_load_log()
         if auto_log:
             for entry in auto_log[-30:]:
                 icon_path = entry.get("icon", "")
