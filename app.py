@@ -1151,6 +1151,28 @@ def call_lmstudio_chat_messages(
 
 _OPENCLAW_WORKSPACE = Path.home() / ".openclaw" / "workspace"
 _NOAH_MEMORY_FILES = ["IDENTITY.md", "RELATIONSHIP.md", "KNOWLEDGE.md", "OBSERVATIONS.md"]
+_SOUL_SECTIONS = [
+    "STEP 1",
+    "Affinity × Mood Behavior",
+    "Agreement Behavior",
+    "Detachment Quality",
+    "Self-Referential Topics",
+    "Conversation Style",
+    "Silence Rules",
+]
+
+
+def _extract_soul_sections(text: str) -> str:
+    """SOUL.mdから有効なセクションだけを抽出する。"""
+    import re
+    sections = re.split(r"\n(?=## )", text)
+    result = []
+    for section in sections:
+        for target in _SOUL_SECTIONS:
+            if re.match(rf"## .*{re.escape(target)}", section):
+                result.append(section.strip())
+                break
+    return "\n\n".join(result)
 
 
 def _load_noah_workspace_memory() -> str:
@@ -1162,6 +1184,12 @@ def _load_noah_workspace_memory() -> str:
             content = fpath.read_text(encoding="utf-8").strip()
             if content:
                 parts.append(f"### {fname}\n{content}")
+    soul_path = _OPENCLAW_WORKSPACE / "SOUL.md"
+    if soul_path.exists():
+        soul_text = soul_path.read_text(encoding="utf-8")
+        soul_extracted = _extract_soul_sections(soul_text)
+        if soul_extracted:
+            parts.append(f"### SOUL.md（行動ルール）\n{soul_extracted}")
     return "\n\n".join(parts)
 
 
