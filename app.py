@@ -2656,6 +2656,8 @@ with tab_auto:
         # 自律発言生成
         if st.session_state["auto_running"] and time.time() >= st.session_state["auto_next_time"]:
             import random
+            # LLM呼び出し前にnext_timeを更新（呼び出し中のautorefreshで再トリガーされないよう）
+            st.session_state["auto_next_time"] = time.time() + random.randint(30, 90)
             speaker = random.choice(auto_all_chars)
             char_name = speaker["name"]
             c_calls = speaker.get("calls_profile") or {}
@@ -2704,8 +2706,6 @@ with tab_auto:
                     "icon": "",
                 })
 
-            # 次の発言まで20〜90秒のランダム間隔
-            st.session_state["auto_next_time"] = time.time() + random.randint(20, 90)
 
         # ログ表示
         auto_log = st.session_state["auto_log"]
