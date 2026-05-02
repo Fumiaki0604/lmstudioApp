@@ -1589,6 +1589,10 @@ if not lm_ok:
 
 model = st.selectbox("使用モデル", models)
 
+# autorefresh: 自律会話が動作中のときだけ5秒ごとにリロード（タブ外で定義する必要あり）
+if st.session_state.get("auto_running"):
+    st_autorefresh(interval=5000, key="auto_refresh_tick")
+
 tab_chat, tab_radio, tab_auto, tab_note, tab_settings = st.tabs(["💬 Chat（相棒）", "📻 ニュースラジオ", "🏠 自律会話", "📝 note記事", "⚙️ 設定"])
 
 # =============================
@@ -2623,9 +2627,6 @@ with tab_auto:
     st.subheader("🏠 自律会話")
     st.caption("キャラクター同士がユーザー介在なしで会話します。")
 
-    # autorefresh: 5秒ごとにチェック（running時のみ実質的に動作）
-    st_autorefresh(interval=5000, key="auto_refresh_tick")
-
     # 参加キャラ: 登録済みキャラ全員（Noah含む）
     auto_speaker_data = get_speaker_data()
     auto_all_chars = []
@@ -2696,8 +2697,13 @@ with tab_auto:
                         "time": datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M"),
                         "icon": speaker.get("icon", ""),
                     })
-            except Exception:
-                pass
+            except Exception as e:
+                st.session_state["auto_log"].append({
+                    "name": "⚠️ エラー",
+                    "text": f"{char_name}: {e}",
+                    "time": datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M"),
+                    "icon": "",
+                })
 
             # 次の発言まで20〜90秒のランダム間隔
             st.session_state["auto_next_time"] = time.time() + random.randint(20, 90)
