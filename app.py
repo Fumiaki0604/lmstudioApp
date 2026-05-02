@@ -2691,21 +2691,23 @@ with tab_auto:
                     _others = [c["name"] for c in all_chars if c["name"] != _cname]
                     _log = _auto_load_log()
                     _recent = _log[-6:]
-                    _hist = "\n".join([f"{m['name']}: {m['text']}" for m in _recent]) if _recent else "（会話開始）"
+                    _hist = "\n".join([f"{m['name']}: {m['text']}" for m in _recent]) if _recent else "（まだ会話が始まっていません）"
                     _sys = f"""あなたは「{_cname}」です。以下の性格・口調で話してください。
 {_personality}
 {f'一人称: 「{_fp}」' if _fp else ''}
 
-【状況】他のキャラクター（{' / '.join(_others)}）と自由に雑談しています。
-【ルール】
+【状況】{' / '.join(_others)}と一緒にいて、自由に雑談しています。
+【絶対ルール】
+- 必ず日本語のみで返答すること。英語・翻訳・注釈は一切不要
 - 1〜3文程度の短い発言のみ
-- ユーザーへの呼びかけは不要
-- 直前の発言から1点だけ拾って反応するか、新しい話題を振る
-- 記事や他者の言葉をそのまま繰り返さない
-- 自分のことを「{_cname}」と三人称で呼ばない{f'。必ず「{_fp}」を使う' if _fp else ''}"""
+- 現実的な日常の話題（天気・食事・趣味・ニュースなど）を話す
+- 架空のキャラクター・ゲーム・アニメなどを突然持ち出さない
+- 直前の発言から1点だけ拾って反応するか、自然な日常の話題を振る
+- 自分のことを「{_cname}」と三人称で呼ばない{f'。必ず「{_fp}」を使う' if _fp else ''}
+- 翻訳や（※日本語版）などの注釈を付けない"""
                     _msgs = [
                         {"role": "system", "content": _sys},
-                        {"role": "user", "content": f"直近の会話:\n{_hist}\n\n{_cname}として次の一言を話してください。"},
+                        {"role": "user", "content": f"直近の会話:\n{_hist}\n\n{_cname}として短く一言だけ日本語で話してください。"},
                     ]
                     if speaker.get("is_noah"):
                         _reply, _ = call_noah_chat(_msgs, timeout=120)
