@@ -16,6 +16,7 @@ import trafilatura
 import streamlit as st
 import streamlit.components.v1 as components
 from streamlit_js_eval import streamlit_js_eval
+from streamlit_autorefresh import st_autorefresh
 
 # =============================
 # Constants
@@ -1396,6 +1397,12 @@ if "max_tokens" not in st.session_state:
     st.session_state["max_tokens"] = 800
 if "temperature" not in st.session_state:
     st.session_state["temperature"] = 0.3
+if "auto_running" not in st.session_state:
+    st.session_state["auto_running"] = False
+if "auto_log" not in st.session_state:
+    st.session_state["auto_log"] = []
+if "auto_next_time" not in st.session_state:
+    st.session_state["auto_next_time"] = 0.0
 
 max_chars = st.session_state["max_chars"]
 max_tokens = st.session_state["max_tokens"]
@@ -1582,7 +1589,7 @@ if not lm_ok:
 
 model = st.selectbox("使用モデル", models)
 
-tab_chat, tab_radio, tab_note, tab_settings = st.tabs(["💬 Chat（相棒）", "📻 ニュースラジオ", "📝 note記事", "⚙️ 設定"])
+tab_chat, tab_radio, tab_auto, tab_note, tab_settings = st.tabs(["💬 Chat（相棒）", "📻 ニュースラジオ", "🏠 自律会話", "📝 note記事", "⚙️ 設定"])
 
 # =============================
 # Chat tab (LINE風：入力欄1つ + 下固定)
@@ -2608,6 +2615,115 @@ DJ（{dj['name']}）がニュースを紹介しました。その中から気に
 # =============================
 # URL Summary tab
 # =============================
+
+# =============================
+# 自律会話タブ
+# =============================
+with tab_auto:
+    st.subheader("🏠 自律会話")
+    st.caption("キャラクター同士がユーザー介在なしで会話します。")
+
+    # autorefresh: 5秒ごとにチェック（running時のみ実質的に動作）
+    st_autorefresh(interval=5000, key="auto_refresh_tick")
+
+    # 参加キャラ: 登録済みキャラ全員（Noah含む）
+    auto_speaker_data = get_speaker_data()
+    auto_all_chars = []
+    if auto_speaker_data:
+        for cname, cinfo in auto_speaker_data.items():
+            styles = cinfo.get("styles") or {}
+            default_id = next(iter(styles.values()), NOAH_SPEAKER_ID if cinfo.get("is_noah") else 3)
+            auto_all_chars.append({**cinfo, "name": cname, "id": default_id})
+
+    if not auto_all_chars:
+        st.warning("キャラクターが登録されていません。")
+    else:
+        col_start, col_stop, col_clear = st.columns([1, 1, 1])
+        with col_start:
+            if st.button("▶ 開始", disabled=st.session_state["auto_running"]):
+                st.session_state["auto_running"] = True
+                st.session_state["auto_next_time"] = time.time() + 5
+                st.rerun()
+        with col_stop:
+            if st.button("⏹ 停止", disabled=not st.session_state["auto_running"]):
+                st.session_state["auto_running"] = False
+                st.rerun()
+        with col_clear:
+            if st.button("🗑 ログクリア"):
+                st.session_state["auto_log"] = []
+                st.rerun()
+
+        # 自律発言生成
+        if st.session_state["auto_running"] and time.time() >= st.session_state["auto_next_time"]:
+            import random
+            speaker = random.choice(auto_all_chars)
+            char_name = speaker["name"]
+            c_calls = speaker.get("calls_profile") or {}
+            c_fp = c_calls.get("first_person") or ""
+            c_personality = speaker.get("personality") or "フレンドリー"
+
+            recent = st.session_state["auto_log"][-6:]
+            history_text = "\n".join([f"{m['name']}: {m['text']}" for m in recent]) if recent else "（会話開始）"
+
+            other_names = [c["name"] for c in auto_all_chars if c["name"] != char_name]
+            auto_system = f"""あなたは「{char_name}」です。以下の性格・口調で話してください。
+{c_personality}
+{f'一人称: 「{c_fp}」' if c_fp else ''}
+
+【状況】他のキャラクター（{' / '.join(other_names)}）と自由に雑談しています。
+【ルール】
+- 1〜3文程度の短い発言のみ
+- ユーザーへの呼びかけは不要
+- 直前の発言から1点だけ拾って反応するか、新しい話題を振る
+- 記事や他者の言葉をそのまま繰り返さない
+- 自分のことを「{char_name}」と三人称で呼ばない{f'。必ず「{c_fp}」を使う' if c_fp else ''}"""
+
+            auto_messages = [
+                {"role": "system", "content": auto_system},
+                {"role": "user", "content": f"直近の会話:\n{history_text}\n\n{char_name}として次の一言を話してください。"},
+            ]
+            try:
+                reply, _ = call_char_chat(
+                    char_info=speaker, messages=auto_messages,
+                    base_url=base_url, model=model,
+                    temperature=0.8, max_tokens=150, timeout=60,
+                )
+                reply = normalize_model_output(reply)
+                if reply:
+                    st.session_state["auto_log"].append({
+                        "name": char_name,
+                        "text": reply,
+                        "time": datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M"),
+                        "icon": speaker.get("icon", ""),
+                    })
+            except Exception:
+                pass
+
+            # 次の発言まで20〜90秒のランダム間隔
+            st.session_state["auto_next_time"] = time.time() + random.randint(20, 90)
+
+        # ログ表示
+        auto_log = st.session_state["auto_log"]
+        if auto_log:
+            for entry in auto_log[-30:]:
+                icon_path = entry.get("icon", "")
+                col_icon, col_msg = st.columns([1, 10])
+                with col_icon:
+                    if icon_path and Path(f"/Users/apple/lmstudio/{icon_path}").exists():
+                        st.image(f"/Users/apple/lmstudio/{icon_path}", width=40)
+                    else:
+                        st.write("👤")
+                with col_msg:
+                    st.markdown(f"**{entry['name']}** <span style='color:gray;font-size:0.8em'>{entry['time']}</span>", unsafe_allow_html=True)
+                    st.write(entry["text"])
+        else:
+            st.info("▶ 開始を押すとキャラクターが自律的に会話を始めます。")
+
+        if st.session_state["auto_running"]:
+            remaining = max(0, int(st.session_state["auto_next_time"] - time.time()))
+            st.caption(f"🟢 動作中 — 次の発言まで約{remaining}秒")
+        else:
+            st.caption("⏸ 停止中")
 
 # =============================
 # note article tab
