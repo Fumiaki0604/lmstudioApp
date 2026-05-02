@@ -2098,6 +2098,13 @@ with tab_chat:
 {nickname_lines if nickname_lines else ''}- 他のキャラの口調・一人称・二人称を絶対に真似しないでください。自分のキャラクター設定だけに忠実に話してください。"""
 
             system = build_system_prompt(char, extra=extra, continue_mode=continue_mode)
+            # 他キャラの一人称→キャラ名置換マップを作成（一人称伝染防止）
+            other_fp_map = {}
+            for oc in chat_characters:
+                if oc["name"] != char_name:
+                    oc_fp = (oc.get("calls_profile") or {}).get("first_person", "")
+                    if oc_fp:
+                        other_fp_map[oc_fp] = oc["name"]
             history = []
             for m in current_chat[-16:]:
                 cn = m.get("char_name")
@@ -2107,8 +2114,11 @@ with tab_chat:
                 elif cn == char_name:
                     history.append({"role": "assistant", "content": m["content"]})
                 elif cn:
-                    # 他キャラの発言: 全文を渡しつつecho防止の注釈を付ける
-                    history.append({"role": "user", "content": f"（{cn}の発言 ※この内容をそのまま繰り返さないこと）{m['content']}"})
+                    # 他キャラの一人称をキャラ名に置換して口調伝染を防ぐ
+                    sanitized = m["content"]
+                    for fp, name in other_fp_map.items():
+                        sanitized = sanitized.replace(fp, f"[{name}]")
+                    history.append({"role": "user", "content": f"（{cn}の発言 ※この内容をそのまま繰り返さないこと）{sanitized}"})
                 else:
                     history.append({"role": "assistant", "content": m["content"]})
             messages = [{"role": "system", "content": system}] + history
