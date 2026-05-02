@@ -1329,6 +1329,8 @@ def normalize_model_output(text: str) -> str:
     )
     # 途中に残ったMOODタグを除去（先頭はcall_char_chatで処理済み、途中残りを掃除）
     text = re.sub(r"\[MOOD:[^\]]+\]\s*", "", text)
+    # （※...）形式のメタ注釈を除去（プロンプト指示がそのまま出力された場合）
+    text = re.sub(r"[（(]※[^）)]*[）)]\s*", "", text)
     # LLMが付与するメタコメント行を除去
     lines = text.split("\n")
     lines = [l for l in lines if not re.match(r"^(\**)?\s*(Note|注|補足|※補足)\s*[:：]", l)]
