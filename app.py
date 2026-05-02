@@ -2643,16 +2643,15 @@ with tab_auto:
         with col_start:
             if st.button("▶ 開始", disabled=st.session_state["auto_running"]):
                 st.session_state["auto_running"] = True
-                st.session_state["auto_next_time"] = time.time() + 5
-                st.rerun()
+                st.session_state["auto_next_time"] = time.time() + 3
         with col_stop:
             if st.button("⏹ 停止", disabled=not st.session_state["auto_running"]):
                 st.session_state["auto_running"] = False
-                st.rerun()
         with col_clear:
             if st.button("🗑 ログクリア"):
                 st.session_state["auto_log"] = []
-                st.rerun()
+
+        st.caption(f"参加キャラ: {len(auto_all_chars)}人 / next={int(st.session_state['auto_next_time'] - time.time())}秒後 / running={st.session_state['auto_running']}")
 
         # 自律発言生成
         if st.session_state["auto_running"] and time.time() >= st.session_state["auto_next_time"]:
