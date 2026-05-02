@@ -2648,11 +2648,14 @@ with tab_auto:
     st.subheader("🏠 自律会話")
     st.caption("キャラクター同士がユーザー介在なしで会話します。")
 
-    # 参加キャラ: 登録済みキャラ全員（Noah含む）
+    # フリースペース参加キャラ（固定メンバー）
+    _AUTO_MEMBERS = {"ずんだもん", "四国めたん", "Noah", "春日部つむぎ", "東北きりたん", "中国うさぎ", "WhiteCUL", "東北ずん子"}
     auto_speaker_data = get_speaker_data()
     auto_all_chars = []
     if auto_speaker_data:
         for cname, cinfo in auto_speaker_data.items():
+            if cname not in _AUTO_MEMBERS:
+                continue
             styles = cinfo.get("styles") or {}
             default_id = next(iter(styles.values()), NOAH_SPEAKER_ID if cinfo.get("is_noah") else 3)
             auto_all_chars.append({**cinfo, "name": cname, "id": default_id})
