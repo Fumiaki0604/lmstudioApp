@@ -433,13 +433,18 @@ def get_speaker_data() -> dict:
                 styles[style_name] = speaker_id
 
         if styles:
-            data[name] = {
+            entry = {
                 "personality": personality,
                 "gender": gender,
                 "icon": icon,
                 "calls_profile": calls_info,
                 "styles": styles,
             }
+            # HermesAgent連携フラグを引き継ぐ
+            if sp.get("is_hermes_agent"):
+                entry["is_hermes_agent"] = True
+                entry["hermes_profile"] = sp.get("hermes_profile", "lmstudio-char")
+            data[name] = entry
 
     # Noah（OpenClaw Gateway経由）
     _noah_cfg = load_noah_config()
@@ -1260,6 +1265,9 @@ def call_char_chat(char_info: dict, messages: list, base_url: str, model: str,
                    temperature: float, max_tokens: int, timeout: int = 180) -> tuple:
     if char_info.get("is_noah"):
         return call_noah_chat(messages, timeout=timeout)
+    if char_info.get("is_hermes_agent"):
+        profile = char_info.get("hermes_profile", "lmstudio-char")
+        return call_hermes_agent_chat(messages, profile=profile, timeout=timeout)
     raw = call_lmstudio_chat_messages(base_url, model, messages, temperature, max_tokens, timeout)
     m = re.match(r"^\[MOOD:([^\]]+)\]\s*", raw)
     mood = m.group(1).lower() if m else None
@@ -1283,6 +1291,52 @@ def call_hermes_agent(prompt: str, timeout: int = 300) -> str:
     if result.returncode != 0 or not output:
         raise RuntimeError(result.stderr.strip() or "HermesAgent returned empty response")
     return output
+
+
+def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeout: int = 300) -> tuple:
+    """messagesリストをHermesAgent（-z）に渡してキャラ応答を得る。
+    systemプロンプトはプロンプト先頭に埋め込み、会話履歴を整形して渡す。
+    戻り値は (text, mood) タプル（moodは常にNone）。
+    """
+    import subprocess
+
+    # system + 会話履歴 → 単一プロンプトに変換
+    parts = []
+    sys_content = ""
+    for m in messages:
+        if m["role"] == "system":
+            sys_content = m["content"]
+        elif m["role"] == "user":
+            parts.append(f"User: {m['content']}")
+        elif m["role"] == "assistant":
+            parts.append(f"Assistant: {m['content']}")
+
+    hist = "\n".join(parts[:-1]) if len(parts) > 1 else ""
+    last = parts[-1] if parts else ""
+
+    prompt_parts = []
+    if sys_content:
+        prompt_parts.append(sys_content)
+    if hist:
+        prompt_parts.append(f"【直近の会話】\n{hist}")
+    if last:
+        prompt_parts.append(f"【あなたへの発言】\n{last.removeprefix('User: ')}")
+    prompt_parts.append("上記を踏まえて短く（1〜3文）日本語で返答してください。")
+
+    full_prompt = "\n\n".join(prompt_parts)
+
+    env = os.environ.copy()
+    env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + env.get("PATH", "")
+    env["HERMES_HOME"] = os.path.expanduser(f"~/.hermes/profiles/{profile}")
+
+    cmd = ["hermes", "-z", full_prompt]
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    output = result.stdout.strip()
+    if result.returncode != 0 or not output:
+        raise RuntimeError(result.stderr.strip() or "HermesAgent returned empty response")
+
+    text = normalize_model_output(output)
+    return text, None
 
 
 # =============================
@@ -1515,7 +1569,7 @@ with st.sidebar:
         chat_mode = st.radio("会話モード", ["1対1", "3人", "4人"], horizontal=True, key="chat_mode")
 
         # キャラB/C選択（複数人モード時）
-        chat_characters = [{"name": selected_char, "id": speaker_id, "personality": speaker_personality, "gender": speaker_gender, "calls_profile": speaker_calls_profile, "styles": char_info.get("styles", {}), "is_noah": char_info.get("is_noah", False)}]
+        chat_characters = [{"name": selected_char, "id": speaker_id, "personality": speaker_personality, "gender": speaker_gender, "calls_profile": speaker_calls_profile, "styles": char_info.get("styles", {}), "is_noah": char_info.get("is_noah", False), "is_hermes_agent": char_info.get("is_hermes_agent", False), "hermes_profile": char_info.get("hermes_profile", "")}]
         if chat_mode in ["3人", "4人"]:
             other_chars = [n for n in char_names if n != selected_char]
             if other_chars:
@@ -1541,6 +1595,8 @@ with st.sidebar:
                     "calls_profile": char_info_b["calls_profile"],
                     "styles": char_info_b.get("styles", {}),
                     "is_noah": char_info_b.get("is_noah", False),
+                    "is_hermes_agent": char_info_b.get("is_hermes_agent", False),
+                    "hermes_profile": char_info_b.get("hermes_profile", ""),
                 })
         if chat_mode == "4人":
             other_chars_c = [n for n in char_names if n != selected_char and n != selected_char_b]
@@ -1566,6 +1622,8 @@ with st.sidebar:
                     "calls_profile": char_info_c["calls_profile"],
                     "styles": char_info_c.get("styles", {}),
                     "is_noah": char_info_c.get("is_noah", False),
+                    "is_hermes_agent": char_info_c.get("is_hermes_agent", False),
+                    "hermes_profile": char_info_c.get("hermes_profile", ""),
                 })
     else:
         st.warning("speakers_all.json が見つかりません")
@@ -1954,6 +2012,22 @@ with tab_chat:
             st.markdown(msg["content"])
 
     # 音声再生 - 親フレームで再生（iframe autoplay制限回避）
+    # TTS pending file（finally/並行ラン競合の回避）があれば読み込んでセッションに移す
+    import pathlib as _pl_tts
+    _tts_pending_path = _pl_tts.Path("/tmp/_lmstudio_tts_pending.bin")
+    _tts_fmt_path = _pl_tts.Path("/tmp/_lmstudio_tts_fmt.txt")
+    if _tts_pending_path.exists():
+        try:
+            _pending_bytes = _tts_pending_path.read_bytes()
+            _pending_fmt = _tts_fmt_path.read_text().strip() if _tts_fmt_path.exists() else "wav"
+            if _pending_bytes:
+                st.session_state["last_audio"] = _pending_bytes
+                st.session_state["last_audio_format"] = _pending_fmt
+        except Exception:
+            pass
+        finally:
+            _tts_pending_path.unlink(missing_ok=True)
+            _tts_fmt_path.unlink(missing_ok=True)
     if "last_audio" in st.session_state and st.session_state["last_audio"]:
         all_audio = [{"data": st.session_state["last_audio"], "format": st.session_state.get("last_audio_format", "mp3")}]
         if st.session_state.get("audio_queue"):
@@ -2246,11 +2320,6 @@ with tab_chat:
                     audio_data, audio_format, tts_error = generate_tts_for_char(reply, _tts_id)
                     if audio_data:
                         audio_queue.append({"data": audio_data, "format": audio_format})
-                    else:
-                        import pathlib
-                        pathlib.Path("/tmp/tts_debug.log").write_text(
-                            f"char={char_name} id={char['id']} fmt={audio_format} err={tts_error} text_len={len(reply)}"
-                        )
 
         if audio_queue:
             st.session_state["last_audio"] = audio_queue[0]["data"]
@@ -2272,28 +2341,34 @@ with tab_chat:
             messages = [{"role": "system", "content": system}] + history
 
             _reply_mood = None
-            with st.spinner("考え中…"):
-                try:
-                    reply, _reply_mood = call_char_chat(
-                        chat_characters[0], messages,
-                        base_url=base_url, model=model,
-                        temperature=temperature, max_tokens=max_tokens,
-                    )
-                    reply = normalize_model_output(reply)
-                except Exception as e:
-                    reply = f"ごめん、今ちょい失敗した。エラー: {e}"
-
-            current_chat.append({"role": "assistant", "content": reply})
-
-            if tts_enabled and reply:
-                with st.spinner("🔊 音声生成中…"):
-                    _tts_sid = _speaker_from_mood(_reply_mood, chat_characters[0].get("styles", {}), speaker_id)
-                    audio_data, audio_format, tts_error = generate_tts_for_char(reply, _tts_sid)
-                    if audio_data:
-                        st.session_state["last_audio"] = audio_data
-                        st.session_state["last_audio_format"] = audio_format
-                    elif tts_error:
-                        st.session_state["tts_error"] = tts_error
+            reply = None
+            try:
+                with st.spinner("考え中…"):
+                    try:
+                        reply, _reply_mood = call_char_chat(
+                            chat_characters[0], messages,
+                            base_url=base_url, model=model,
+                            temperature=temperature, max_tokens=max_tokens,
+                        )
+                        reply = normalize_model_output(reply)
+                    except Exception as e:
+                        reply = f"ごめん、今ちょい失敗した。エラー: {e}"
+            finally:
+                if reply is not None:
+                    current_chat.append({"role": "assistant", "content": reply})
+                    if tts_enabled:
+                        try:
+                            import pathlib as _pl2
+                            _tts_sid = _speaker_from_mood(_reply_mood, chat_characters[0].get("styles", {}), speaker_id)
+                            audio_data, audio_format, tts_error = generate_tts_for_char(reply, _tts_sid)
+                            if audio_data:
+                                # ファイル経由でバッファリング（セッションステートの並行ラン競合を回避）
+                                _pl2.Path("/tmp/_lmstudio_tts_pending.bin").write_bytes(audio_data)
+                                _pl2.Path("/tmp/_lmstudio_tts_fmt.txt").write_text(audio_format)
+                            elif tts_error:
+                                st.session_state["tts_error"] = tts_error
+                        except Exception:
+                            pass
 
         # --- 複数人モード（3人/4人）---
         else:
@@ -2764,6 +2839,12 @@ with tab_auto:
                     ]
                     if speaker.get("is_noah"):
                         _reply, _ = call_noah_chat(_msgs, timeout=120)
+                    elif speaker.get("is_hermes_agent"):
+                        _reply, _ = call_hermes_agent_chat(
+                            _msgs,
+                            profile=speaker.get("hermes_profile", "lmstudio-char"),
+                            timeout=180,
+                        )
                     else:
                         _raw = call_lmstudio_chat_messages(b_url, mdl, _msgs, 0.8, 150, timeout=120)
                         _m = re.match(r"^\[MOOD:[^\]]+\]\s*", _raw)
