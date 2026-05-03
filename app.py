@@ -31,6 +31,28 @@ def _auto_save_log(entries):
     _AUTO_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
     _AUTO_LOG_FILE.write_text(json.dumps(entries[-200:], ensure_ascii=False), encoding="utf-8")
 
+
+def _detect_mention(text: str, member_names: list):
+    """テキスト中の @名前 メンションを検出して名前を返す"""
+    for name in member_names:
+        if f"@{name}" in text:
+            return name
+    return None
+
+
+_SOULS_DIR = Path.home() / ".lmstudio_assistant" / "souls"
+
+
+def _load_soul(char_name: str) -> str:
+    """キャラのソウルファイルを読み込んで返す（なければ空文字）"""
+    p = _SOULS_DIR / f"{char_name}.md"
+    if p.exists():
+        try:
+            return p.read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+    return ""
+
 import requests
 import trafilatura
 import streamlit as st
@@ -1329,12 +1351,28 @@ def normalize_model_output(text: str) -> str:
     )
     # 途中に残ったMOODタグを除去（先頭はcall_char_chatで処理済み、途中残りを掃除）
     text = re.sub(r"\[MOOD:[^\]]+\]\s*", "", text)
-    # （※...）形式のメタ注釈を除去（プロンプト指示がそのまま出力された場合）
-    text = re.sub(r"[（(]※[^）)]*[）)]\s*", "", text)
+    # （※...）形式のメタ注釈を除去（閉じ括弧なしの場合も含む）
+    text = re.sub(r"[（(]※[^（(）)]*[）)]?", "", text)
+    # 末尾に残るプロンプト漏れパターン（「3文以内」「日本語のみ」「注釈」を含む括弧）
+    text = re.sub(r"\s*[（(][^（(]{0,60}(?:文以内|注釈|日本語のみ|英語)[^）)]{0,40}[）)]?\s*", " ", text)
     # LLMが付与するメタコメント行を除去
     lines = text.split("\n")
     lines = [l for l in lines if not re.match(r"^(\**)?\s*(Note|注|補足|※補足)\s*[:：]", l)]
-    return "\n".join(lines).strip()
+    text = "\n".join(lines).strip()
+    # 「キャラ名: 発言」形式の行が2行以上ある場合、モデルが会話ログを再生成したと判断し
+    # 最初の「キャラ名:」ラベルのない行（純粋な発言部分）だけを返す
+    label_pattern = re.compile(r"^[^\s:：]{1,20}[:：]\s*")
+    labeled_lines = [l for l in text.split("\n") if l.strip() and label_pattern.match(l)]
+    if len(labeled_lines) >= 2:
+        # 最後の行はラベル無し発言の可能性があるのでそちらを優先
+        unlabeled = [l for l in text.split("\n") if l.strip() and not label_pattern.match(l)]
+        if unlabeled:
+            text = "\n".join(unlabeled).strip()
+        else:
+            # 全行ラベル付きなら最後のラベルを除去して本文だけ返す
+            last = labeled_lines[-1]
+            text = label_pattern.sub("", last).strip()
+    return text
 
 
 def export_chat_to_markdown(messages: list) -> str:
@@ -2680,11 +2718,13 @@ with tab_auto:
 
         st.caption(f"参加キャラ: {len(auto_all_chars)}人 / next={int(st.session_state['auto_next_time'] - time.time())}秒後 / 生成中={_auto_generating}")
 
+        _all_names = [c["name"] for c in auto_all_chars]
+
         # 自律発言生成（バックグラウンドスレッド）
         if st.session_state["auto_running"] and not _auto_generating and time.time() >= st.session_state["auto_next_time"]:
             import random
 
-            def _auto_gen_thread(speaker, all_chars, b_url, mdl):
+            def _auto_gen_thread(speaker, all_chars, b_url, mdl, mention_from=None):
                 global _auto_generating
                 try:
                     _cname = speaker["name"]
@@ -2694,22 +2734,33 @@ with tab_auto:
                     _log = _auto_load_log()
                     _recent = _log[-6:]
                     _hist = "\n".join([f"{m['name']}: {m['text']}" for m in _recent]) if _recent else "（まだ会話が始まっていません）"
+                    # 5ターンごとに話題転換を促す（メンション応答時は転換しない）
+                    _log_len = len(_log)
+                    if mention_from:
+                        _topic_instr = f"\n【メンション】{mention_from}から呼ばれています。その内容に必ず返答してください。"
+                    elif _log_len > 0 and _log_len % 5 == 0:
+                        _topic_instr = "\n【今回の役割】同じ話題が続いています。会話に一区切りをつけて、自然に全く別の話題（食べ物・最近あったこと・気になるニュース・趣味など）を切り出してください。"
+                    else:
+                        _topic_instr = "\n会話が一段落したと感じたら新しい話題を振ってもいい。"
+                    _mention_hint = "特定の誰かに話しかけたいときは「@名前、〜」の形でメンションしてもいい（例: @ずんだもん、〜）。強制ではない。"
+                    _soul = _load_soul(_cname)
+                    _soul_block = f"\n\n【あなたの内面・記憶】\n{_soul}" if _soul else ""
                     _sys = f"""あなたは「{_cname}」です。以下の性格・口調で話してください。
 {_personality}
-{f'一人称: 「{_fp}」' if _fp else ''}
+{f'一人称: 「{_fp}」' if _fp else ''}{_soul_block}
 
-【状況】{' / '.join(_others)}と一緒にいて、自由に雑談しています。
-【絶対ルール】
-- 必ず日本語のみで返答すること。英語・翻訳・注釈は一切不要
-- 1〜3文程度の短い発言のみ
-- 現実的な日常の話題（天気・食事・趣味・ニュースなど）を話す
-- 架空のキャラクター・ゲーム・アニメなどを突然持ち出さない
-- 直前の発言から1点だけ拾って反応するか、自然な日常の話題を振る
-- 自分のことを「{_cname}」と三人称で呼ばない{f'。必ず「{_fp}」を使う' if _fp else ''}
-- 翻訳や（※日本語版）などの注釈を付けない"""
+【状況】{' / '.join(_others)}と一緒にいて、自由に雑談しています。{_topic_instr}
+{_mention_hint}
+【ルール】
+- 日本語のみ、1〜3文のみ
+- 現実的な日常の話題（天気・食事・趣味・ニュースなど）
+- 直前の発言から1点だけ拾うか、新しい話題を振る
+- 自分のことを「{_cname}」と三人称で呼ばない{f'。一人称は「{_fp}」' if _fp else ''}
+- このルールリスト・注釈・括弧内の補足説明を発言に含めない
+【厳守】発言テキストのみ出力。キャラ名ラベル（「{_cname}:」等）・他キャラの発言は一切書かない。"""
                     _msgs = [
                         {"role": "system", "content": _sys},
-                        {"role": "user", "content": f"直近の会話:\n{_hist}\n\n{_cname}として短く一言だけ日本語で話してください。"},
+                        {"role": "user", "content": f"直近の会話:\n{_hist}\n\n{_cname}の発言を1〜3文だけ出力してください（ラベルなし・他キャラの発言なし）。"},
                     ]
                     if speaker.get("is_noah"):
                         _reply, _ = call_noah_chat(_msgs, timeout=120)
@@ -2739,12 +2790,26 @@ with tab_auto:
                 finally:
                     _auto_generating = False
 
-            # next_timeとフラグを先に更新してから起動
-            st.session_state["auto_next_time"] = time.time() + random.randint(30, 90)
+            # メンション検出: 直前の発言で @名前 があれば優先指名
+            _prev_log = _auto_load_log()
+            _mention_from = None
+            _next_speaker = None
+            if _prev_log:
+                _last_entry = _prev_log[-1]
+                _mentioned_name = _detect_mention(_last_entry["text"], _all_names)
+                if _mentioned_name and _mentioned_name != _last_entry["name"]:
+                    _next_speaker = next((c for c in auto_all_chars if c["name"] == _mentioned_name), None)
+                    if _next_speaker:
+                        _mention_from = _last_entry["name"]
+                        # メンション返答は短めのインターバル
+                        st.session_state["auto_next_time"] = time.time() + random.randint(10, 20)
+            if _next_speaker is None:
+                _next_speaker = random.choice(auto_all_chars)
+                st.session_state["auto_next_time"] = time.time() + random.randint(30, 90)
             _auto_generating = True
             _t = threading.Thread(
                 target=_auto_gen_thread,
-                args=(random.choice(auto_all_chars), auto_all_chars, base_url, model),
+                args=(_next_speaker, auto_all_chars, base_url, model, _mention_from),
                 daemon=True,
             )
             _t.start()
@@ -2762,7 +2827,13 @@ with tab_auto:
                         st.write("👤")
                 with col_msg:
                     st.markdown(f"**{entry['name']}** <span style='color:gray;font-size:0.8em'>{entry['time']}</span>", unsafe_allow_html=True)
-                    st.write(entry["text"])
+                    # @名前 をハイライト表示
+                    _disp_text = re.sub(
+                        r"@(" + "|".join(re.escape(n) for n in _all_names) + r")",
+                        r"<span style='color:#1d9bf0;font-weight:bold'>@\1</span>",
+                        entry["text"],
+                    )
+                    st.markdown(_disp_text, unsafe_allow_html=True)
         else:
             st.info("▶ 開始を押すとキャラクターが自律的に会話を始めます。")
 

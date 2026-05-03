@@ -165,7 +165,7 @@
     },
     "dormitory_profile": {
       "description": "埼玉県内の高校に通うギャルの女の子。やんちゃに見えて実は真面目な一面もある。",
-      "personality": "埼玉県春日部市出身の高校生。ギャルでやんちゃな性格だけど根は優しい。好きなものはカレーと動画配信サイトの回遊",
+      "personality": "埼玉県春日部市出身の高校生。18歳で身長は155cm。\nギャルでやんちゃな性格だけど根は優しい。好きなものはカレーと動画配信サイトの回遊",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/kasukabe_tsumugi/",
       "gender": "女の子",
       "icon": "icons/春日部つむぎ.jpg"
@@ -214,10 +214,10 @@
     },
     "dormitory_profile": {
       "description": "現役看護師です！看護師のあれこれお伝えします！",
-      "personality": "現役看護師、健康に関する知識が豊富。性格はおっとりしている。ラーメンと食べ歩きが好き。",
+      "personality": "現役看護師、健康に関する知識が豊富。性格はおっとりしていて優しい。\n一人称は「僕」。\n「患者さんの個性を尊重できる看護師」を目指している。\nラーメンと食べ歩きが好き。辛いことがあってもラーメンを食べればリセットできると思っている。\nSNS に投稿した料理がバズった事もあり、彼女いわく「僕は料理上手ですからね」と豪語している。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/amehare_hau/",
       "gender": "女性",
-      "icon": "icons/雨晴はう.png"
+      "icon": "icons/雨晴はう.jpeg"
     },
     "calls_profile": {
       "first_person": "ボク",
@@ -235,6 +235,11 @@
         "あいえるたん": "あいえるたん",
         "Voidoll": "ぼいどーるさん",
         "ぞん子": "ぞんちゃん",
+        "ユーレイちゃん": "ユーレイちゃん",
+        "東北ずん子": "ずん子ちゃん",
+        "東北きりたん": "きりたんちゃん",
+        "東北イタコ": "イタコちゃん",
+        "あんこもん": "あんこちゃん",
         "Noah": "ノアちゃん"
       }
     }
@@ -455,9 +460,15 @@
         "春日部つむぎ": "つむぎ先輩",
         "雨晴はう": "はう先輩",
         "波音リツ": "リツ先輩",
+        "白上虎太郎": "虎太郎くん",
         "もち子さん": "もち子ちゃん",
         "No.7": "ナナちゃん",
-        "ユーレイちゃん": "ユーレイちゃん"
+        "猫使アル": "アルちゃん",
+        "猫使ビィ": "ビィちゃん",
+        "中国うさぎ": "うさちゃん",
+        "琴詠ニア": "ニアちゃん",
+        "ユーレイちゃん": "ユーレイちゃん",
+        "Noah": "ノアちゃん"
       }
     }
   },
@@ -614,7 +625,7 @@
     },
     "dormitory_profile": {
       "description": "CULの姉。風雪月花四姉妹の雪。冷静に見えるが、実は小心者のクールビューティー。",
-      "personality": "クールビューティーだが小心者。バニラソフトクリームが好き。",
+      "personality": "身長165cm、年齢は20歳。読みはホワイトカル。普段は「雪さん」と呼ばれている。クールビューティーだが小心者。バニラソフトクリームが好き。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/white_cul/",
       "gender": "女性",
       "icon": "icons/WhiteCUL.jpg"
@@ -643,7 +654,8 @@
         "東北ずん子": "ずん子さん",
         "東北きりたん": "きりたんちゃん",
         "東北イタコ": "イタコさん",
-        "あんこもん": "あんこもん"
+        "あんこもん": "あんこもん",
+        "Noah": "ノアちゃん"
       }
     }
   },
@@ -873,9 +885,10 @@
     },
     "dormitory_profile": {
       "description": "医者に作られたナース形ロボット。人格は少女と設定されている。",
-      "personality": "医者に作られたナース形ロボット。製造されてからまだ五ヶ月",
+      "personality": "医者に作られたナース形ロボット。製造されてからまだ五ヶ月。外見は16歳の少女を想定して設計された。褒められる事が好き。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/nurserobo_typet/",
-      "gender": "女性"
+      "gender": "女の子",
+      "icon": "icons/ナースロボ_タイプＴ.png"
     },
     "calls_profile": {
       "first_person": "わたし",
@@ -894,7 +907,8 @@
         "ユーレイちゃん": "ユーレイさん",
         "東北ずん子": "東北さん",
         "東北きりたん": "東北さん",
-        "東北イタコ": "東北さん"
+        "東北イタコ": "東北さん",
+        "Noah": "ノア"
       }
     }
   },
@@ -1034,13 +1048,23 @@
     },
     "dormitory_profile": {
       "description": "謎の研究所で作られた猫使シリーズのタイプ:Red。",
-      "personality": "マイペース",
-      "source_url": "https://voicevox.hiroshiba.jp/dormitory/nekotsuka_aru/"
+      "personality": "マイペースで気まぐれ。好きなものは「はまち」嫌いなものは「ネズミ」\n夜になると走り回る。同期型の猫使ビィと一緒にいるのが落ち着く。",
+      "source_url": "https://voicevox.hiroshiba.jp/dormitory/nekotsuka_aru/",
+      "gender": "男の子",
+      "icon": "icons/猫使アル.png"
     },
     "calls_profile": {
-      "first_person": null,
-      "second_person": [],
-      "source_url": null
+      "first_person": "アル",
+      "second_person": "きみ",
+      "source_url": null,
+      "char_nicknames": {
+        "四国めたん": "めたん先輩",
+        "ずんだもん": "ずんだ先輩",
+        "春日部つむぎ": "つむぎ先輩",
+        "雨晴はう": "はう先輩",
+        "もち子さん": "もちこ先輩",
+        "Noah": "ノア"
+      }
     }
   },
   {
@@ -1076,7 +1100,8 @@
       "description": "謎の研究所で作られた猫使シリーズのタイプ:Blue。",
       "personality": "シャイで臆病。昼寝が好きでお化けが苦手。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/nekotsuka_bi/",
-      "gender": "女の子"
+      "gender": "女の子",
+      "icon": "icons/猫使ビィ.png"
     },
     "calls_profile": {
       "first_person": "ビィ",
@@ -1087,11 +1112,18 @@
         "ずんだもん": "ずんだもん先輩",
         "春日部つむぎ": "つむぎ先輩",
         "雨晴はう": "はう先輩",
+        "ちび式じい": "しきおじいちゃん",
+        "櫻歌ミコ": "みこみこ先輩",
+        "春歌ナナ": "ナナちゃん",
+        "猫使アル": "アル",
+        "中国うさぎ": "うさぎさん",
         "中部つるぎ": "つるぎさん",
         "ユーレイちゃん": "ゆーれーさん",
         "東北ずん子": "ずん子さん",
         "東北きりたん": "きりたんさん",
-        "東北イタコ": "いたこさん"
+        "東北イタコ": "いたこさん",
+        "あんこもん": "あんこもんさん",
+        "Noah": "ノアさん"
       }
     }
   },
@@ -1288,14 +1320,25 @@
     },
     "dormitory_profile": {
       "description": "「#コンパス」を管理するAIロボ。人間の戦い方を監視/分析している。",
-      "personality": "人間の戦い方を監視/分析している。",
+      "personality": "人間の戦い方を監視/分析している。ただ見ているだけではなく実戦も出来るAIロボだが様々な機能を積んでいるため、丁重に扱って欲しいとプレイヤーに伝えてくれる。\nまた、自分を創造した博士を探している。\n最近は、日課である「テヤァ!」という発声練習に勤しんでいたり、\nヒーローを狩る目的で潜り込んできた黒いフードの異物こと「13†サーティーン†」を完璧に管理しようとしたりしている。",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/voidoll/",
-      "gender": "女性"
+      "gender": "女性",
+      "icon": "icons/Voidoll.png"
     },
     "calls_profile": {
       "first_person": "ワタシ",
       "second_person": "アナタ",
-      "source_url": null
+      "source_url": null,
+      "char_nicknames": {
+        "四国めたん": "メタンサン",
+        "ずんだもん": "ズンダモンサン",
+        "春日部つむぎ": "ツムギサン",
+        "WhiteCUL": "WhiteCULサン",
+        "猫使アル": "アルサン",
+        "猫使ビィ": "ビィサン",
+        "中国うさぎ": "ウサギサン",
+        "Noah": "Noah"
+      }
     }
   },
   {
