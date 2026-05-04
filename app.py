@@ -1301,28 +1301,26 @@ def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeo
     """
     import subprocess
 
-    # system + 会話履歴 → 単一プロンプトに変換
+    # hermes -z のプロファイル（SOUL.md）にキャラ設定が入っているため
+    # システムプロンプトは渡さない。会話履歴（直近4件）＋ユーザー発言のみ渡す。
+    turns = [m for m in messages if m["role"] in ("user", "assistant")]
+    recent = turns[-5:]  # 直近4往復+今回の発言
     parts = []
-    sys_content = ""
-    for m in messages:
-        if m["role"] == "system":
-            sys_content = m["content"]
-        elif m["role"] == "user":
+    for m in recent:
+        if m["role"] == "user":
             parts.append(f"User: {m['content']}")
-        elif m["role"] == "assistant":
+        else:
             parts.append(f"Assistant: {m['content']}")
 
     hist = "\n".join(parts[:-1]) if len(parts) > 1 else ""
-    last = parts[-1] if parts else ""
+    last = parts[-1].removeprefix("User: ") if parts else ""
 
     prompt_parts = []
-    if sys_content:
-        prompt_parts.append(sys_content)
     if hist:
         prompt_parts.append(f"【直近の会話】\n{hist}")
     if last:
-        prompt_parts.append(f"【あなたへの発言】\n{last.removeprefix('User: ')}")
-    prompt_parts.append("上記を踏まえて短く（1〜3文）日本語で返答してください。")
+        prompt_parts.append(f"【あなたへの発言】\n{last}")
+    prompt_parts.append("短く（1〜3文）日本語で返答してください。")
 
     full_prompt = "\n\n".join(prompt_parts)
 
