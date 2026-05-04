@@ -975,12 +975,12 @@ def get_news_for_category(category: str, max_items: int = 5) -> str:
         return ""
     lines = []
     for item in items:
-        desc = item.get("description", "").strip()
+        desc = item.get("description", "").strip()[:150]
         link = item.get("link", "")
         if desc:
-            lines.append(f"■ {item['title']}\n  {desc}\n  URL: {link}")
+            lines.append(f"■ {item['title']}\n  {desc}")
         else:
-            lines.append(f"■ {item['title']}\n  URL: {link}")
+            lines.append(f"■ {item['title']}")
     return "\n\n".join(lines)
 
 
@@ -1191,7 +1191,8 @@ def call_lmstudio_chat_messages(
         "stream": False,
     }
     r = requests.post(endpoint, json=payload, timeout=timeout)
-    r.raise_for_status()
+    if not r.ok:
+        raise requests.HTTPError(f"{r.status_code} {r.reason}: {r.text[:300]}", response=r)
     msg = r.json()["choices"][0]["message"]
     # Qwen3等のThinkingモデルはcontentが空でreasoning_contentに本文が入る
     return msg.get("content") or msg.get("reasoning_content") or ""
@@ -1707,10 +1708,10 @@ if not lm_ok:
 
 model = st.selectbox("使用モデル", models)
 
-# autorefresh: 常時マウント（タブ切替時の再マウントによるタブリセットを防ぐため）
-# running時は10秒ごと、停止時も30秒ごとに保持（unmount→remountを避ける）
-_auto_refresh_interval = 10000 if st.session_state.get("auto_running") else 30000
-st_autorefresh(interval=_auto_refresh_interval, key="auto_refresh_tick")
+# autorefresh: 自律会話が動いているときだけマウント
+# 停止中にマウントすると、LM呼び出し中にスクリプトが中断されるため条件付きに変更
+if st.session_state.get("auto_running"):
+    st_autorefresh(interval=10000, key="auto_refresh_tick")
 
 tab_chat, tab_radio, tab_auto, tab_note, tab_settings = st.tabs(["💬 Chat（相棒）", "📻 ニュースラジオ", "🏠 自律会話", "📝 note記事", "⚙️ 設定"])
 
@@ -2301,25 +2302,29 @@ with tab_chat:
             messages = [{"role": "system", "content": system}] + history
 
             _char_mood = None
-            with st.spinner(f"💭 {char_name}が考え中…"):
-                try:
-                    reply, _char_mood = call_char_chat(
-                        char, messages,
-                        base_url=base_url, model=model,
-                        temperature=temperature, max_tokens=max_tokens,
-                    )
-                    reply = normalize_model_output(reply)
-                except Exception as e:
-                    reply = f"エラー: {e}"
-
-            current_chat.append({"role": "assistant", "content": reply, "char_name": char_name})
-
-            if tts_enabled and reply:
-                with st.spinner(f"🔊 {char_name}の音声生成中…"):
-                    _tts_id = _speaker_from_mood(_char_mood, char.get("styles", {}), char["id"])
-                    audio_data, audio_format, tts_error = generate_tts_for_char(reply, _tts_id)
-                    if audio_data:
-                        audio_queue.append({"data": audio_data, "format": audio_format})
+            reply = None
+            try:
+                with st.spinner(f"💭 {char_name}が考え中…"):
+                    try:
+                        reply, _char_mood = call_char_chat(
+                            char, messages,
+                            base_url=base_url, model=model,
+                            temperature=temperature, max_tokens=max_tokens,
+                        )
+                        reply = normalize_model_output(reply)
+                    except Exception as e:
+                        reply = f"エラー: {e}"
+            finally:
+                if reply is not None:
+                    current_chat.append({"role": "assistant", "content": reply, "char_name": char_name})
+                    if tts_enabled:
+                        try:
+                            _tts_id = _speaker_from_mood(_char_mood, char.get("styles", {}), char["id"])
+                            audio_data, audio_format, tts_error = generate_tts_for_char(reply, _tts_id)
+                            if audio_data:
+                                audio_queue.append({"data": audio_data, "format": audio_format})
+                        except Exception:
+                            pass
 
         if audio_queue:
             st.session_state["last_audio"] = audio_queue[0]["data"]
