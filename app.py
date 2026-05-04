@@ -1328,17 +1328,28 @@ def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeo
     env["PATH"] = os.path.expanduser("~/.local/bin") + ":" + env.get("PATH", "")
     env["HERMES_HOME"] = os.path.expanduser(f"~/.hermes/profiles/{profile}")
 
-    cmd = ["hermes", "-z", full_prompt]
+    def _run_hermes(prof: str) -> str:
+        e = os.environ.copy()
+        e["PATH"] = os.path.expanduser("~/.local/bin") + ":" + e.get("PATH", "")
+        e["HERMES_HOME"] = os.path.expanduser(f"~/.hermes/profiles/{prof}")
+        try:
+            r = subprocess.run(["hermes", "-z", full_prompt], capture_output=True, text=True, timeout=timeout, env=e)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"HermesAgent timeout ({timeout}s)")
+        except FileNotFoundError:
+            raise RuntimeError("hermes コマンドが見つかりません")
+        if r.returncode != 0 or not r.stdout.strip():
+            raise RuntimeError(r.stderr.strip()[:200] or "empty response")
+        return r.stdout.strip()
+
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(f"HermesAgent timeout ({timeout}s)")
-    except FileNotFoundError:
-        raise RuntimeError("hermes コマンドが見つかりません")
-    output = result.stdout.strip()
-    if result.returncode != 0 or not output:
-        stderr = result.stderr.strip()
-        raise RuntimeError(stderr[:200] if stderr else "HermesAgent returned empty response")
+        output = _run_hermes(profile)
+    except RuntimeError as e:
+        # レート制限 or APIエラー時はローカルにフォールバック
+        if profile != "lmstudio-char":
+            output = _run_hermes("lmstudio-char")
+        else:
+            raise
 
     text = normalize_model_output(output)
     return text, None
