@@ -978,9 +978,9 @@ def get_news_for_category(category: str, max_items: int = 5) -> str:
         desc = item.get("description", "").strip()[:150]
         link = item.get("link", "")
         if desc:
-            lines.append(f"■ {item['title']}\n  {desc}")
+            lines.append(f"■ {item['title']}\n  {desc}" + (f"\n  {link}" if link else ""))
         else:
-            lines.append(f"■ {item['title']}")
+            lines.append(f"■ {item['title']}" + (f"\n  {link}" if link else ""))
     return "\n\n".join(lines)
 
 
@@ -2262,12 +2262,31 @@ with tab_chat:
                 nn = c_nicknames.get(on)
                 if nn:
                     nickname_lines += f"- {on}のことは必ず「{nn}」と呼ぶこと。「{on}」とフルネームで呼ばないこと。\n"
+            # 他キャラの一人称→キャラ名置換マップを先に構築（extra文字列で参照するため）
+            other_fp_map = {}
+            for oc in chat_characters:
+                if oc["name"] != char_name:
+                    oc_fp = (oc.get("calls_profile") or {}).get("first_person", "")
+                    if oc_fp:
+                        other_fp_map[oc_fp] = oc["name"]
+            # 一人称ルール文を構築（c_fpが未設定でも禁止一人称を明示する）
+            _fp_lines = []
+            if c_fp:
+                _fp_lines.append(f"- 一人称は必ず「{c_fp}」を使うこと。")
+            if other_fp_map:
+                _banned = "・".join(f"「{fp}」" for fp in other_fp_map)
+                _fp_lines.append(f"- 他のキャラの一人称（{_banned}）は絶対に使わないこと。")
+            _fp_lines.append(
+                f"- 自分のことを「{char_name}」と三人称で呼ばないこと。" +
+                (f"自分を指す場合は必ず「{c_fp}」を使うこと。" if c_fp else "")
+            )
+            _fp_text = "\n".join(_fp_lines)
             # ペルソナ厳守指示（キャラA含む全員に付与）
             extra = f"""【会話の状況】あなたは{','.join(other_names)}との会話に参加しています。直前の発言を踏まえて会話を続けてください。既に話した内容を繰り返さず、新しい話題や視点を加えてください。
 - ユーザーには一切話しかけず、{' と '.join(other_names)}に向けて話すこと。ユーザーへの呼びかけ・返答は禁止。
 - 会話の相手は{' と '.join(other_names)}のみ。（話題提供）と書かれたメッセージは会話のきっかけであり、ユーザーへの返答は不要。
 【絶対厳守】あなたは「{char_name}」です。自分の返答だけを出力すること。他のキャラの返答は絶対に書かないこと。【キャラ名】のような表記も使わないこと。
-{f'- 一人称は必ず「{c_fp}」を使うこと。他のキャラの一人称は絶対に使わないこと。' if c_fp else ''}{f'- 自分のことを「{char_name}」と三人称で呼ばないこと。自分を指す場合は必ず「{c_fp}」を使うこと。' if c_fp else f'- 自分のことを「{char_name}」と三人称で呼ばないこと。'}
+{_fp_text}
 【反応のルール】
 - 直前の発言から最も気になる1点だけを選んで反応すること。全部の話題に触れない。
 - ニュース記事のタイトルや本文の言葉をそのまま使わないこと。自分の言葉で感想・意見を述べること。
@@ -2276,13 +2295,6 @@ with tab_chat:
 {nickname_lines if nickname_lines else ''}- 他のキャラの口調・一人称・二人称を絶対に真似しないでください。自分のキャラクター設定だけに忠実に話してください。"""
 
             system = build_system_prompt(char, extra=extra, continue_mode=continue_mode)
-            # 他キャラの一人称→キャラ名置換マップを作成（一人称伝染防止）
-            other_fp_map = {}
-            for oc in chat_characters:
-                if oc["name"] != char_name:
-                    oc_fp = (oc.get("calls_profile") or {}).get("first_person", "")
-                    if oc_fp:
-                        other_fp_map[oc_fp] = oc["name"]
             history = []
             for m in current_chat[-16:]:
                 cn = m.get("char_name")
