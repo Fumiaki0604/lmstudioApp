@@ -1331,10 +1331,16 @@ def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeo
     env["HERMES_HOME"] = os.path.expanduser(f"~/.hermes/profiles/{profile}")
 
     cmd = ["hermes", "-z", full_prompt]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"HermesAgent timeout ({timeout}s)")
+    except FileNotFoundError:
+        raise RuntimeError("hermes コマンドが見つかりません")
     output = result.stdout.strip()
     if result.returncode != 0 or not output:
-        raise RuntimeError(result.stderr.strip() or "HermesAgent returned empty response")
+        stderr = result.stderr.strip()
+        raise RuntimeError(stderr[:200] if stderr else "HermesAgent returned empty response")
 
     text = normalize_model_output(output)
     return text, None
@@ -2369,7 +2375,7 @@ with tab_chat:
                         )
                         reply = normalize_model_output(reply)
                     except Exception as e:
-                        reply = f"ごめん、今ちょい失敗した。エラー: {e}"
+                        reply = f"ごめん、今ちょい失敗した。エラー: {str(e)[:120]}"
             finally:
                 if reply is not None:
                     current_chat.append({"role": "assistant", "content": reply})
