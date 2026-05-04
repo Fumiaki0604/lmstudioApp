@@ -43,8 +43,13 @@ def _auto_save_log(entries):
 
 
 def _detect_mention(text: str, member_names: list):
+    import re as _re
     for name in member_names:
+        # @名前 形式
         if f"@{name}" in text:
+            return name
+        # 自然な呼びかけ: 「名前、」「名前は」「名前！」「名前？」「名前へ」
+        if _re.search(rf"{_re.escape(name)}[、！？!?はへ]", text):
             return name
     return None
 
