@@ -60,7 +60,7 @@ def fetch_rss_items_with_category(url: str, source_name: str = "", max_items: in
                 "title": title_el.text or "",
                 "category": category,
                 "link": link_el.text if link_el is not None else "",
-                "description": (desc_el.text or "")[:300] if desc_el is not None else "",
+                "description": (desc_el.text or "")[:500] if desc_el is not None else "",
             })
         return result
     except Exception:
@@ -110,7 +110,7 @@ def get_news_for_category(category: str, max_items: int = 5) -> str:
         return ""
     lines = []
     for item in items:
-        desc = item.get("description", "").strip()[:150]
+        desc = item.get("description", "").strip()[:300]
         link = item.get("link", "")
         if desc:
             lines.append(f"■ {item['title']}\n  {desc}" + (f"\n  {link}" if link else ""))
