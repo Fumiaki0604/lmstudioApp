@@ -1,11 +1,15 @@
+import base64
 import json
 import os
 import re
+import struct
 import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import requests
 import streamlit as st
@@ -596,12 +600,22 @@ with tab_chat:
                         nn = c_nicknames.get(on)
                         if nn:
                             nickname_lines += f"- {on}のことは必ず「{nn}」と呼ぶこと。「{on}」とフルネームで呼ばないこと。\n"
+                    other_desc = ""
+                    for oc in chat_characters:
+                        if oc["name"] == char["name"]:
+                            continue
+                        oc_nn = c_nicknames.get(oc["name"], oc["name"])
+                        oc_p = oc.get("personality") or ""
+                        if oc_p:
+                            other_desc += f"- {oc_nn}: {oc_p[:100]}\n"
+                    _other_desc_block = ("【一緒にいる相手の紹介】\n" + other_desc) if other_desc else ""
                     persona_block = f"""あなたは「{char['name']}」です。
 {f'- 一人称は「{c_fp}」を使うこと。' if c_fp else ''}
 {f'- 性別: {c_gender}' if c_gender else ''}
 {nickname_lines}{f'- 性格: {c_personality}' if c_personality else ''}
 - 他のキャラの口調・一人称・二人称・話し方を絶対に真似しないこと。自分独自の視点と言葉で話すこと。
-- {build_talk_target_instruction([p['name'] for p in prev_replies], include_user=False)}"""
+- {build_talk_target_instruction([p['name'] for p in prev_replies], include_user=False)}
+{_other_desc_block}"""
 
                     if idx == 0:
                         # キャラA: ニュース紹介プロンプト（従来通り）
@@ -974,12 +988,21 @@ with tab_chat:
             c_fp = c_calls.get("first_person") or ""
             c_sp = c_calls.get("second_person") or ""
             c_nicknames = c_calls.get("char_nicknames") or {}
-            # 全キャラ共通: ニックネーム指示
+            # 全キャラ共通: ニックネーム指示 + 他キャラ紹介
             nickname_lines = ""
-            for on in other_names:
-                nn = c_nicknames.get(on)
-                if nn:
+            other_char_desc_lines = ""
+            _other_char_block = ""
+            for oc in chat_characters:
+                if oc["name"] == char_name:
+                    continue
+                on = oc["name"]
+                nn = c_nicknames.get(on, on)
+                if c_nicknames.get(on):
                     nickname_lines += f"- {on}のことは必ず「{nn}」と呼ぶこと。「{on}」とフルネームで呼ばないこと。\n"
+                oc_personality = oc.get("personality") or ""
+                if oc_personality:
+                    other_char_desc_lines += f"- {nn}: {oc_personality[:100]}\n"
+            _other_char_block = ("【一緒にいる相手の紹介】\n" + other_char_desc_lines) if other_char_desc_lines else ""
             # 他キャラの一人称→キャラ名置換マップを先に構築（extra文字列で参照するため）
             other_fp_map = {}
             for oc in chat_characters:
@@ -1010,7 +1033,8 @@ with tab_chat:
 - ニュース記事のタイトルや本文の言葉をそのまま使わないこと。自分の言葉で感想・意見を述べること。
 - 直前に誰かが言ったことをそのままなぞることは絶対にしないこと。自分の独自の視点・感想・疑問だけを話すこと。
 【呼び名ルール（厳守）】
-{nickname_lines if nickname_lines else ''}- 他のキャラの口調・一人称・二人称を絶対に真似しないでください。自分のキャラクター設定だけに忠実に話してください。"""
+{nickname_lines if nickname_lines else ''}- 他のキャラの口調・一人称・二人称を絶対に真似しないでください。自分のキャラクター設定だけに忠実に話してください。
+{_other_char_block}"""
 
             system = build_system_prompt(char, extra=extra, continue_mode=continue_mode)
             history = []
