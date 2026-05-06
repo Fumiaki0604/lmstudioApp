@@ -14,8 +14,54 @@ NOAH_CONFIG_PATH = Path(__file__).parent / "noah_config.json"
 _SOULS_DIR = STORE_DIR / "souls"
 _AUTO_LOG_FILE = STORE_DIR / "auto_chat_log.json"
 
-_auto_generating = False
 _auto_gen_lock = threading.Lock()
+# mutable dict でスレッド状態を保持（Streamlit rerun で上書きされない）
+_auto_state = {"generating": False, "name": ""}
+
+
+def parse_soul_affinities(soul_text: str) -> dict:
+    """soul.md の ## 親密度スコア セクションから {名前: int} を返す。"""
+    result = {}
+    in_section = False
+    for line in soul_text.splitlines():
+        if re.match(r"^##\s*親密度スコア", line):
+            in_section = True
+            continue
+        if in_section:
+            if line.startswith("##"):
+                break
+            m = re.match(r"^([^:#\-\s][^:]+?):\s*(\d+)", line.strip())
+            if m:
+                result[m.group(1).strip()] = int(m.group(2))
+    return result
+
+
+def affinity_behavior(score: int, name: str) -> str:
+    """親密度スコアに応じた行動ヒントを返す（数値は出力しない）。"""
+    if score <= 25:
+        return f"{name}: 嫌悪感あり。会話を避け、冷たく接する"
+    elif score <= 40:
+        return f"{name}: 疎遠。よそよそしく、積極的には絡まない"
+    elif score <= 55:
+        return f"{name}: ニュートラル。普通に接する"
+    elif score <= 70:
+        return f"{name}: 友好的。気軽に話しかける"
+    elif score <= 85:
+        return f"{name}: 気安い仲間。タメ口で積極的に絡む"
+    else:
+        return f"{name}: 大親友。常に一緒にいたい、積極的に誘う"
+
+
+def sanitize_soul_for_prompt(soul_text: str) -> str:
+    """LLMに渡す前に親密度の数値情報を除去する。
+    - ## 親密度スコア セクション全体を削除
+    - メンバーへの印象内の (親密度: XX) アノテーションを削除
+    """
+    # ## 親密度スコア セクションを除去（末尾まで or 次の ## まで）
+    soul_text = re.sub(r"\n## 親密度スコア\b.*", "", soul_text, flags=re.DOTALL)
+    # (親密度: XX) / （親密度: XX） を除去
+    soul_text = re.sub(r"\s*[（(]親密度[:：]\s*\d+[）)]\s*", " ", soul_text)
+    return soul_text.strip()
 
 
 def _load_soul(char_name: str) -> str:

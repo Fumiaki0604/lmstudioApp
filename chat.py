@@ -2,10 +2,17 @@
 import os
 import re
 import subprocess
+import threading
 from pathlib import Path
 
 import requests
 import trafilatura
+
+# LM Studio への同時リクエストを1本に制限するセマフォ。
+# note生成（ユーザー操作）はセマフォを取得してから _priority_request フラグを立て、
+# バックグラウンドタスク（soul更新・自律会話）は _priority_request が立っていたら即スキップする。
+_lmstudio_sem = threading.Semaphore(1)
+_priority_request = threading.Event()  # Setされている間はバックグラウンドがスキップ
 
 EMBEDDING_PREFIXES = ("text-embedding-", "embedding-", "nomic-embed-")
 DEFAULT_UA = (
@@ -41,21 +48,36 @@ def lmstudio_models(base_url: str, timeout: int = 3):
     return [m for m in all_models if is_chat_model(m)]
 
 
-def call_lmstudio_chat_messages(base_url, model, messages, temperature, max_tokens, timeout):
-    endpoint = base_url.rstrip("/") + "/chat/completions"
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "stream": False,
-    }
-    r = requests.post(endpoint, json=payload, timeout=timeout)
-    if not r.ok:
-        raise requests.HTTPError(f"{r.status_code} {r.reason}: {r.text[:300]}", response=r)
-    msg = r.json()["choices"][0]["message"]
-    # Qwen3等のThinkingモデルはcontentが空でreasoning_contentに本文が入る
-    return msg.get("content") or msg.get("reasoning_content") or ""
+def call_lmstudio_chat_messages(base_url, model, messages, temperature, max_tokens, timeout,
+                                *, background: bool = False):
+    """LM Studio にチャットリクエストを送る。
+    background=True のタスクは priority_request 中はスキップ（TimeoutError）し、
+    それ以外はセマフォで直列化して順番に処理する。
+    """
+    if background and _priority_request.is_set():
+        raise TimeoutError("priority request in progress, skipping background task")
+    acquired = _lmstudio_sem.acquire(timeout=30)
+    if not acquired:
+        raise TimeoutError("LM Studio semaphore timeout")
+    try:
+        if background and _priority_request.is_set():
+            raise TimeoutError("priority request in progress, skipping background task")
+        endpoint = base_url.rstrip("/") + "/chat/completions"
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        r = requests.post(endpoint, json=payload, timeout=timeout)
+        if not r.ok:
+            raise requests.HTTPError(f"{r.status_code} {r.reason}: {r.text[:300]}", response=r)
+        msg = r.json()["choices"][0]["message"]
+        # Qwen3等のThinkingモデルはcontentが空でreasoning_contentに本文が入る
+        return msg.get("content") or msg.get("reasoning_content") or ""
+    finally:
+        _lmstudio_sem.release()
 
 
 def _extract_soul_sections(text: str) -> str:
@@ -118,7 +140,8 @@ def call_hermes_agent(prompt: str, timeout: int = 300) -> str:
     return output
 
 
-def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeout: int = 300) -> tuple:
+def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeout: int = 300,
+                           include_mood: bool = False) -> tuple:
     turns = [m for m in messages if m["role"] in ("user", "assistant")]
     recent = turns[-5:]
     parts = []
@@ -136,7 +159,10 @@ def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeo
         prompt_parts.append(f"【直近の会話】\n{hist}")
     if last:
         prompt_parts.append(f"【あなたへの発言】\n{last}")
-    prompt_parts.append("短く（1〜3文）日本語で返答してください。")
+    suffix = "短く（1〜3文）日本語で返答してください。"
+    if include_mood:
+        suffix += " 返答の冒頭に必ず [MOOD:xxx] を付けること（xxx: normal/happy/angry/sad/whisper/tired/calm/sexy）。"
+    prompt_parts.append(suffix)
     full_prompt = "\n\n".join(prompt_parts)
 
     def _run_hermes(prof: str) -> str:
@@ -161,7 +187,9 @@ def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeo
         else:
             raise
 
-    return normalize_model_output(output), None
+    m_mood = re.match(r"^\[MOOD:([^\]]+)\]\s*", output)
+    mood = m_mood.group(1).lower() if m_mood else None
+    return normalize_model_output(output), mood
 
 
 def call_char_chat(char_info: dict, messages: list, base_url: str, model: str,
@@ -208,15 +236,31 @@ URL: {url}
 """
 
 
+_SYSTEM_PROMPT_LEAK_PATTERNS = re.compile(
+    r"^[-・]?\s*("
+    r"一人称は|相手は「|自分のことを「|ユーザーへの|会話の相手は|"
+    r"他のキャラの一人称|絶対に使わない|直前の発言から|ニュース記事のタイトル"
+    r")",
+)
+_HEADING_LEAK_PATTERNS = re.compile(
+    r"^【(会話の状況|ルール|絶対厳守|呼び名ルール|反応のルール|一緒にいる相手)】"
+)
+
+
 def normalize_model_output(text: str) -> str:
     if not text:
         return text
     text = text.replace("<br/>", "\n").replace("<br>", "\n").replace("&nbsp;", " ")
     text = re.sub(r"\[MOOD:[^\]]+\]\s*", "", text)
+    # （話題提供）がLLMにechoされた場合は除去
+    text = re.sub(r"[（(]話題提供[）)]\s*", "", text)
     text = re.sub(r"[（(]※[^（(）)]*[）)]?", "", text)
     text = re.sub(r"\s*[（(][^（(]{0,60}(?:文以内|注釈|日本語のみ|英語)[^）)]{0,40}[）)]?\s*", " ", text)
     lines = text.split("\n")
     lines = [l for l in lines if not re.match(r"^(\**)?\s*(Note|注|補足|※補足)\s*[:：]", l)]
+    # システムプロンプトの指示文がleak した行を除去
+    lines = [l for l in lines if not _SYSTEM_PROMPT_LEAK_PATTERNS.match(l.strip())]
+    lines = [l for l in lines if not _HEADING_LEAK_PATTERNS.match(l.strip())]
     text = "\n".join(lines).strip()
     label_pattern = re.compile(r"^[^\s:：]{1,20}[:：]\s*")
     labeled_lines = [l for l in text.split("\n") if l.strip() and label_pattern.match(l)]
