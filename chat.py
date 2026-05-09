@@ -56,7 +56,7 @@ def call_lmstudio_chat_messages(base_url, model, messages, temperature, max_toke
     """
     if background and _priority_request.is_set():
         raise TimeoutError("priority request in progress, skipping background task")
-    acquired = _lmstudio_sem.acquire(timeout=30)
+    acquired = _lmstudio_sem.acquire(timeout=90)
     if not acquired:
         raise TimeoutError("LM Studio semaphore timeout")
     try:
@@ -142,6 +142,7 @@ def call_hermes_agent(prompt: str, timeout: int = 300) -> str:
 
 def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeout: int = 300,
                            include_mood: bool = False) -> tuple:
+    sys_content = next((m["content"] for m in messages if m["role"] == "system"), None)
     turns = [m for m in messages if m["role"] in ("user", "assistant")]
     recent = turns[-5:]
     parts = []
@@ -155,6 +156,8 @@ def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeo
     last = parts[-1].removeprefix("User: ") if parts else ""
 
     prompt_parts = []
+    if sys_content:
+        prompt_parts.append(f"【指示】\n{sys_content}")
     if hist:
         prompt_parts.append(f"【直近の会話】\n{hist}")
     if last:

@@ -54,6 +54,8 @@ from speakers import (
     load_noah_config, save_noah_config,
     update_speaker_icon, update_speaker_profile, get_speaker_data,
     parse_soul_affinities, affinity_behavior, sanitize_soul_for_prompt,
+    extract_soul_interests, detect_topic_repetition,
+    load_episodes, format_episodes_for_prompt,
 )
 
 # 自律会話スレッド状態は speakers._auto_state (rerun-safe mutable dict) を使用
@@ -189,7 +191,7 @@ def export_chat_to_json(messages: list) -> str:
 
 
 # =============================
-st.set_page_config(layout="centered")
+st.set_page_config(page_title="ChatRoom", layout="centered")
 
 # ---- session state ----
 # ファイル保存ベースの会話履歴（現在未使用）
@@ -237,6 +239,10 @@ if "temperature" not in st.session_state:
     st.session_state["temperature"] = 0.3
 if "auto_running" not in st.session_state:
     st.session_state["auto_running"] = False
+if "topic_change_cooldown" not in st.session_state:
+    st.session_state["topic_change_cooldown"] = 0
+if "topic_debug_log" not in st.session_state:
+    st.session_state["topic_debug_log"] = []
 if "auto_log" not in st.session_state:
     st.session_state["auto_log"] = []
 if "auto_next_time" not in st.session_state:
@@ -443,15 +449,26 @@ def _do_soul_updates(log_entries: list, all_chars: list, base_url: str, model: s
         current_soul = (soul_path.read_text(encoding="utf-8") if soul_path.exists() else
                         f"# {cname} のソウルファイル\n\n## 自己認識\n\n## 最近の関心\n\n## 重要な記憶\n\n## メンバーへの印象\n")
         other_str = "、".join(other_names)
+        _episodes = load_episodes(cname, limit=10)
+        _ep_text = format_episodes_for_prompt(_episodes)
+        _ep_block = f"\n\n直近のエピソード記録（具体的な出来事）:\n{_ep_text}" if _ep_text else ""
         prompt = f"""以下は「{cname}」の直近の発言です:
-{my_text}
+{my_text}{_ep_block}
 
 現在のソウルファイル:
 {current_soul}
 
 上記の発言を踏まえて、ソウルファイルの以下セクションを更新してください（各セクションは3行以内）。
-- <最近の関心>: 発言から読み取れる最近の興味・関心
-- <重要な記憶>: 記憶に残りそうな出来事・発言
+
+【重要ルール】
+- 具体的な出来事・固有名詞・会話の内容をそのまま記録しない
+- 発言から読み取れる「{cname}の性質・傾向・価値観」に抽象化して記録する
+- 例（NG）:「黒糖アイス作りの買い出しが楽しみ」
+- 例（OK）:「みんなで協力して何かを作り上げることに喜びを感じる」
+
+各セクションの意味:
+- <最近の関心>: 発言から読み取れる興味・関心の傾向（具体的な話題名ではなく傾向として）
+- <重要な記憶>: {cname}の人格形成に関わる体験から導かれた価値観・信念（出来事の記録ではない）
 - <メンバーへの印象>: {other_str}への印象（既存も維持しつつ更新）
 
 形式:
@@ -480,7 +497,21 @@ def _do_soul_updates(log_entries: list, all_chars: list, base_url: str, model: s
             pass
 
 
-tab_auto, tab_note, tab_settings = st.tabs(["🏠 自律会話", "📝 note記事", "⚙️ 設定"])
+with st.sidebar:
+    st.divider()
+    with st.expander("🐛 話題転換デバッグ", expanded=False):
+        _dbg_log = st.session_state.get("topic_debug_log", [])
+        _cd = st.session_state.get("topic_change_cooldown", 0)
+        st.caption(f"cooldown残り: {_cd}")
+        if _dbg_log:
+            for _line in _dbg_log:
+                st.caption(_line)
+        else:
+            st.caption("イベントなし")
+        if st.button("クリア", key="dbg_clear"):
+            st.session_state["topic_debug_log"] = []
+
+tab_auto, tab_note, tab_autogen, tab_settings = st.tabs(["🏠 自律会話", "📝 note記事", "🤖 AutoGen PoC", "⚙️ 設定"])
 
 with tab_auto:
     st.subheader("🏠 自律会話")
@@ -509,6 +540,10 @@ with tab_auto:
         with col_stop:
             if st.button("⏹ 停止", disabled=not st.session_state["auto_running"]):
                 st.session_state["auto_running"] = False
+                _stop_log = _auto_load_log()
+                if _stop_log:
+                    threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
+                    threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
         with col_clear:
             if st.button("🗑 ログクリア"):
                 st.session_state["auto_log"] = []
@@ -540,19 +575,31 @@ with tab_auto:
                     _personality = speaker.get("personality") or "フレンドリー"
                     _others = [c["name"] for c in all_chars if c["name"] != _cname]
                     _log = _auto_load_log()
-                    _recent = _log[-6:]
+                    _recent = _log[-3:]
                     _hist = "\n".join([f"【{m['name']}】{m['text']}" for m in _recent]) if _recent else "（まだ会話が始まっていません）"
-                    # 5ターンごとに話題転換を促す（メンション応答時は転換しない）
-                    _log_len = len(_log)
+                    _soul = _load_soul(_cname)
+                    _soul_block = f"\n\n【あなたの内面・記憶】\n{sanitize_soul_for_prompt(_soul)}" if _soul else ""
+                    # 話題転換: クールダウン中 or 直近ループ検出でsoul固有話題を注入
+                    _cooldown = st.session_state.get("topic_change_cooldown", 0)
                     if mention_from:
                         _topic_instr = f"\n【メンション】{mention_from}から呼ばれています。その内容に必ず返答してください。"
-                    elif _log_len > 0 and _log_len % 5 == 0:
-                        _topic_instr = "\n【今回の役割】同じ話題が続いています。会話に一区切りをつけて、自然に全く別の話題（食べ物・最近あったこと・気になるニュース・趣味など）を切り出してください。"
+                    elif _cooldown > 0:
+                        st.session_state["topic_change_cooldown"] = _cooldown - 1
+                        _interests = extract_soul_interests(_soul) if _soul else ""
+                        _dbg = f"cooldown={_cooldown} → {_cname} 新話題注入 / {_interests[:30] if _interests else 'なし'}"
+                        st.session_state["topic_debug_log"] = ([_dbg] + st.session_state.get("topic_debug_log", []))[:20]
+                        _topic_instr = f"\n【今回の役割】前の話題はもう終わりました。あなた自身の関心事（{_interests}）から全く新しい話題を自然に切り出してください。" if _interests else "\n【今回の役割】前の話題はもう終わりました。全く新しい話題を自然に切り出してください。"
+                    elif (_triggered := detect_topic_repetition(_log, window=5, threshold=3)):
+                        st.session_state["topic_change_cooldown"] = 3
+                        _interests = extract_soul_interests(_soul) if _soul else ""
+                        _top_words = ", ".join(f"{w}×{c}" for w, c in _triggered[:3])
+                        _dbg = f"🔁 ループ検出 [{_top_words}] → {_cname} まとめ役 / cooldown=3"
+                        st.session_state["topic_debug_log"] = ([_dbg] + st.session_state.get("topic_debug_log", []))[:20]
+                        _interest_hint = f"その後、あなた自身の関心事（{_interests}）など別の話題に自然につなげてください。" if _interests else "その後、別の話題に自然につなげてください。"
+                        _topic_instr = f"\n【今回の役割】この話題がひと段落したタイミングです。会話で決まったことや起きたことをチャットらしく自然にひと言でまとめ、その出来事を既成事実として扱ってください。{_interest_hint}"
                     else:
                         _topic_instr = "\n会話が一段落したと感じたら新しい話題を振ってもいい。"
                     _mention_hint = "特定の誰かに話しかけたいときは「@名前、〜」の形でメンションしてもいい（例: @ずんだもん、〜）。強制ではない。"
-                    _soul = _load_soul(_cname)
-                    _soul_block = f"\n\n【あなたの内面・記憶】\n{sanitize_soul_for_prompt(_soul)}" if _soul else ""
                     _nick_lines = [f"  {n} → 「{_char_nicknames[n]}」" for n in _others if n in _char_nicknames]
                     _nick_block = "\n【他キャラへの呼び方（必ずこの呼び方を使う）】\n" + "\n".join(_nick_lines) if _nick_lines else ""
                     # 他キャラの一人称（代名詞と混同しないよう明示）
@@ -606,6 +653,7 @@ with tab_auto:
 - このルールリスト・注釈・括弧内の補足説明を発言に含めない
 - 自分も他のキャラクターも「AI」「プログラム」「キャラクター」ではなく、全員が生身の人間として存在している。AIという概念を会話に持ち込まない
 - 直近の会話履歴の発言者を正確に把握すること。「◯◯が言った」と言う場合は、必ず履歴の該当行の名前を確認し、別のキャラクターの発言と混同しない
+- 直前の他キャラの発言と同じ内容・同じ言い回しを繰り返さない。似た意見でも別の角度・言葉で表現する{f'（直前の発言: 「{_log[-1]["text"][:40]}」）' if _log else ''}
 【厳守】発言テキストのみ出力。キャラ名ラベル（「{_cname}:」等）・他キャラの発言は一切書かない。{_mood_instr}"""
                     _msgs = [
                         {"role": "system", "content": _sys},
@@ -623,7 +671,7 @@ with tab_auto:
                         )
                     else:
                         _raw = call_lmstudio_chat_messages(b_url, mdl, _msgs, 0.8, 150, timeout=120, background=True)
-                        _mm = re.match(r"^\[MOOD:([^\]]+)\]\s*", _raw)
+                        _mm = re.match(r"^\[MOOD:([^\]]+)\]\s*", _raw) or re.match(r"^\[(\w+)\]\s*", _raw)
                         if _mm:
                             _mood_val = _mm.group(1).lower()
                             _raw = _raw[_mm.end():]
@@ -644,12 +692,9 @@ with tab_auto:
                         })
                         _auto_save_log(_log)
                         # 10ターンごとに各キャラの記憶に書き戻す
-                        if len(_log) % 20 == 0:
-                            threading.Thread(target=_do_noah_feedback, args=(_log,), daemon=True).start()
-                            threading.Thread(target=_do_soul_updates, args=(_log, all_chars, b_url, mdl), daemon=True).start()
                 except Exception as e:
                     import requests as _req
-                    _is_timeout = isinstance(e, (_req.exceptions.Timeout, _req.exceptions.ConnectionError))
+                    _is_timeout = isinstance(e, (_req.exceptions.Timeout, _req.exceptions.ConnectionError, TimeoutError))
                     if not _is_timeout:
                         _log = _auto_load_log()
                         _log.append({
@@ -669,7 +714,16 @@ with tab_auto:
             _next_speaker = None
             if _prev_log:
                 _last_entry = _prev_log[-1]
-                _mentioned_name = _detect_mention(_last_entry["text"], _all_names)
+                # あだ名→正式名の逆引きマップを全キャラ分構築
+                _nickname_to_name: dict = {}
+                _all_speaker_data = get_speaker_data()
+                for _c in auto_all_chars:
+                    _c_data = _all_speaker_data.get(_c["name"], {})
+                    _c_nicks = (_c_data.get("calls_profile") or {}).get("char_nicknames") or {}
+                    for _target, _alias in _c_nicks.items():
+                        if _target in _all_names:
+                            _nickname_to_name[_alias] = _target
+                _mentioned_name = _detect_mention(_last_entry["text"], _all_names, _nickname_to_name)
                 if _mentioned_name and _mentioned_name != _last_entry["name"]:
                     _next_speaker = next((c for c in auto_all_chars if c["name"] == _mentioned_name), None)
                     if _next_speaker:
@@ -721,6 +775,10 @@ with tab_auto:
         if st.session_state["auto_running"]:
             if st.button("⏹ 停止", key="auto_stop_bottom", disabled=not st.session_state["auto_running"]):
                 st.session_state["auto_running"] = False
+                _stop_log = _auto_load_log()
+                if _stop_log:
+                    threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
+                    threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
 
         # TTS: 新着エントリを読み上げ
         # st.audio()はリレンダーでDOMが消えて止まるため、window.parent._autoTtsAudioに保持してリレンダー耐性を持たせる
@@ -740,10 +798,13 @@ with tab_auto:
                     if _audio_data:
                         import base64 as _b64
                         _a64 = _b64.b64encode(_audio_data).decode()
+                        _play_idx = _auto_played
                         st.components.v1.html(f"""<script>
 (function(){{
   try {{
     var p = window.parent;
+    if (p._autoTtsLastIdx === {_play_idx}) return;
+    p._autoTtsLastIdx = {_play_idx};
     if (!p._autoTtsAudio) p._autoTtsAudio = new p.Audio();
     p._autoTtsAudio.src = 'data:audio/wav;base64,{_a64}';
     p._autoTtsAudio.play();
@@ -917,6 +978,86 @@ with tab_note:
                         st.error(f"投稿エラー: {_e}")
         else:
             st.warning("note Cookieが未設定です。設定タブで登録してください。")
+
+# =============================
+# AutoGen PoC tab
+# =============================
+with tab_autogen:
+    st.subheader("🤖 AutoGen GroupChat PoC")
+    st.caption("AutoGen の GroupChat でキャラ同士が自律的に話者を選んで会話します。")
+
+    from autogen_chat import StreamingGroupChat
+
+    _ag_speaker_data = get_speaker_data()
+    _ag_char_names = list(_ag_speaker_data.keys())  # Noah / Hermes も含む
+    _ag_selected = st.multiselect(
+        "参加キャラ（2〜4人）", _ag_char_names,
+        default=_ag_char_names[:3] if len(_ag_char_names) >= 3 else _ag_char_names,
+        key="ag_chars",
+    )
+    _ag_topic = st.text_input("最初のメッセージ（話題）", value="今日はどんな一日だった？", key="ag_topic")
+    _ag_turns = st.slider("最大ターン数", 4, 30, 12, key="ag_turns")
+
+    if "ag_log" not in st.session_state:
+        st.session_state["ag_log"] = []
+    if "ag_gc" not in st.session_state:
+        st.session_state["ag_gc"] = None
+
+    _ag_col1, _ag_col2 = st.columns(2)
+    with _ag_col1:
+        _ag_start = st.button("▶ 開始", key="ag_start_btn", disabled=len(_ag_selected) < 2)
+    with _ag_col2:
+        _ag_stop = st.button("⏹ 停止", key="ag_stop_btn")
+
+    if _ag_start:
+        st.session_state["ag_log"] = []
+        chars = []
+        for n in _ag_selected:
+            d = _ag_speaker_data[n]
+            cp = d.get("calls_profile") or {}
+            chars.append({
+                "name": n,
+                "personality": d.get("personality", ""),
+                "first_person": cp.get("first_person", "私"),
+                "second_person": cp.get("second_person", "あなた"),
+                "is_noah": d.get("is_noah", False),
+                "is_hermes_agent": d.get("is_hermes_agent", False),
+                "hermes_profile": d.get("hermes_profile", "lmstudio-char"),
+            })
+        gc = StreamingGroupChat(model=model, characters=chars, max_turns=_ag_turns)
+        gc.start(_ag_topic)
+        st.session_state["ag_gc"] = gc
+        st.session_state["ag_running"] = True
+
+    if _ag_stop and st.session_state.get("ag_gc"):
+        st.session_state["ag_gc"].stop()
+        st.session_state["ag_running"] = False
+
+    # Poll and display
+    _ag_gc = st.session_state.get("ag_gc")
+    if _ag_gc:
+        _new = _ag_gc.get_messages()
+        _done = False
+        for m in _new:
+            if m.get("done"):
+                _done = True
+                st.session_state["ag_running"] = False
+            elif m.get("text"):
+                st.session_state["ag_log"].append(m)
+        if _done:
+            st.session_state["ag_gc"] = None
+
+    _ag_log = st.session_state.get("ag_log", [])
+    _ag_chat_area = st.container()
+    with _ag_chat_area:
+        for entry in _ag_log:
+            st.markdown(f"**{entry['name']}**: {entry['text']}")
+
+    if st.session_state.get("ag_running") and st.session_state.get("ag_gc"):
+        st.caption("💬 会話中...")
+        import time as _t; _t.sleep(1.5); st.rerun()
+    elif not _ag_log:
+        st.info("参加キャラと話題を選んで「開始」を押してください。")
 
 # =============================
 # Settings tab (Prompt editor + persistence)
