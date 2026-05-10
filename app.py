@@ -57,6 +57,9 @@ from speakers import (
     extract_soul_interests, detect_topic_repetition,
     load_episodes, format_episodes_for_prompt,
 )
+from conversation_controller import (
+    CONTROL_RATE, update_conv_state, MovePlanner, build_move_instruction,
+)
 
 # 自律会話スレッド状態は speakers._auto_state (rerun-safe mutable dict) を使用
 
@@ -599,6 +602,13 @@ with tab_auto:
                         _topic_instr = f"\n【今回の役割】この話題がひと段落したタイミングです。会話で決まったことや起きたことをチャットらしく自然にひと言でまとめ、その出来事を既成事実として扱ってください。{_interest_hint}"
                     else:
                         _topic_instr = "\n会話が一段落したと感じたら新しい話題を振ってもいい。"
+                    # ConversationController: move_type instruction を追記（メンション時は除外）
+                    if not mention_from and random.random() < CONTROL_RATE:
+                        _conv_state = update_conv_state(_log)
+                        _move = MovePlanner().pick_move(_conv_state)
+                        _move_instr = build_move_instruction(_move, _conv_state)
+                        if _move_instr:
+                            _topic_instr += _move_instr
                     _mention_hint = "特定の誰かに話しかけたいときは「@名前、〜」の形でメンションしてもいい（例: @ずんだもん、〜）。強制ではない。"
                     _nick_lines = [f"  {n} → 「{_char_nicknames[n]}」" for n in _others if n in _char_nicknames]
                     _nick_block = "\n【他キャラへの呼び方（必ずこの呼び方を使う）】\n" + "\n".join(_nick_lines) if _nick_lines else ""
