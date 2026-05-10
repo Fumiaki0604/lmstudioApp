@@ -47,6 +47,13 @@ MOVE_INSTRUCTIONS = {
     "observe": "会話全体を少し引いて見た観察者的な一言を添える。断定せず余白を残す。",
 }
 
+# Phase 2.5: care_loop 定数
+CARE_LOOP_TERMS = [
+    "休み", "休もう", "お休み", "無理", "疲れ",
+    "気をつけ", "元気", "大事", "待ってる", "心配", "懸念",
+    "頑張", "無理しない", "ゆっくり", "体調", "眠れ",
+]
+
 # Phase 2: OutputGuardrail 定数
 WEAK_ENDINGS = [
     "大事", "大切", "楽しもう", "楽しみ", "リラックス", "最高", "いい考え",
@@ -56,7 +63,7 @@ ABSTRACT_ONLY_TERMS = [
     "気分転換", "予定", "時間", "一日", "夜更かし", "リラックス", "気持ち",
 ]
 _CONCRETE_ACTION_RE = re.compile(
-    r"[一-鿿]{2,}(?:する|した|して|したい|しよう|しない|係|役|担当|買|作|食|飲|持|使)"
+    r"[一-鿿]{2,}(?:する|した|して|したい|しよう|係|役|担当|買|作|食|飲|持|使)"
     r"|(?:係|役|担当|買い出し|味見|混ぜる|片付け|並べ)"
 )
 
@@ -88,6 +95,8 @@ class ConversationState:
     do_not_repeat_intents: list = field(default_factory=list)  # Phase 3以降
     last_move_types: list = field(default_factory=list)
     topic_stage: str = "active"  # active / aging / closing
+    care_loop_score: float = 0.0
+    should_close_topic: bool = False
 
 
 def update_conv_state(log_entries: list) -> ConversationState:
@@ -158,6 +167,15 @@ def update_conv_state(log_entries: list) -> ConversationState:
     open_hooks = [p for p in HOOK_PATTERNS if p in last_text]
     do_not_repeat = [e["text"][:50] for e in recent[-2:]]
 
+    # --- care_loop_score ---
+    care_hits = sum(
+        1 for e in recent if any(t in e["text"] for t in CARE_LOOP_TERMS)
+    )
+    care_loop_score = care_hits / max(len(recent), 1)
+
+    # --- should_close_topic ---
+    should_close = topic_age >= 5 or care_loop_score >= 0.6
+
     return ConversationState(
         current_scene=current_scene,
         current_topic_terms=topic_terms,
@@ -168,6 +186,8 @@ def update_conv_state(log_entries: list) -> ConversationState:
         should_shift_topic=should_shift,
         do_not_repeat=do_not_repeat,
         topic_stage=stage,
+        care_loop_score=care_loop_score,
+        should_close_topic=should_close,
     )
 
 
@@ -175,7 +195,12 @@ class MovePlanner:
     def pick_move(self, state: ConversationState, last_move_types: list = None) -> str:
         last_moves = (last_move_types or [])[-3:]
 
-        if state.topic_stage == "closing":
+        # care_loop が強い → ズレを作るmove_typeを優先
+        if state.care_loop_score >= 0.6:
+            pool = ["tease", "short_reaction", "introduce_conflict", "summarize_and_close", "bridge"]
+        elif state.should_close_topic:
+            pool = ["summarize_and_close", "bridge", "shift", "invite_other"]
+        elif state.topic_stage == "closing":
             pool = ["shift", "bridge", "summarize_and_close", "invite_other", "short_reaction"]
         elif state.topic_stage == "aging":
             # introduce_conflict を2枠にして出現頻度を上げる
@@ -187,7 +212,8 @@ class MovePlanner:
         else:  # active
             pool = ["agree_and_extend", "ask", "bring_new_detail", "tease", "short_reaction", "observe"]
 
-        if state.open_hooks:
+        # open_hook 優先はcare_loop/close中は除外
+        if state.open_hooks and state.care_loop_score < 0.6 and not state.should_close_topic:
             pool = ["ask", "bring_new_detail", "tease"] + pool
 
         candidates = [m for m in pool if m not in last_moves] or pool
@@ -244,6 +270,19 @@ def check_output(reply: str, state: ConversationState) -> tuple:
             overlap = list(reply_words & phrase_words)[:2]
             reasons.append(f"直近発言と語重複（{'・'.join(overlap)}）")
             break
+
+    # 4. care_loop_intent: 気遣い系語 + state の care_loop_score が高い + 具体要素なし
+    if state.care_loop_score >= 0.5 and not has_concrete:
+        care_hits = sum(1 for t in CARE_LOOP_TERMS if t in reply)
+        if care_hits >= 1:
+            ng_score += 0.4
+            reasons.append("気遣いループ継続（休み・無理・元気だけで終わっている）")
+
+    # 5. generic_question: 「どう思う？」系で選択肢なし
+    if re.search(r"どう思[うう][？?]|どうでしょう[？?]|どう感じ", reply):
+        if not re.search(r"どっち|どちら|どれ|するのと|にする[？?]", reply):
+            ng_score += 0.3
+            reasons.append("汎用質問（「どう思う？」系・選択肢なし）")
 
     is_ng = ng_score >= 0.6
     return is_ng, round(ng_score, 2), reasons

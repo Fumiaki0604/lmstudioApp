@@ -775,7 +775,16 @@ with tab_auto:
                         # メンション返答は短めのインターバル
                         st.session_state["auto_next_time"] = time.time() + random.randint(10, 20)
             if _next_speaker is None:
-                _next_speaker = random.choice(auto_all_chars)
+                # same_speaker_guard: 直近3件中2件以上同じ話者は次回候補から除外
+                _recent_names = [e["name"] for e in _prev_log[-3:]] if _prev_log else []
+                _name_counts: dict = {}
+                for _n in _recent_names:
+                    _name_counts[_n] = _name_counts.get(_n, 0) + 1
+                _excluded_speakers = {_n for _n, _cnt in _name_counts.items() if _cnt >= 2}
+                _sp_candidates = [c for c in auto_all_chars if c["name"] not in _excluded_speakers]
+                if not _sp_candidates:
+                    _sp_candidates = auto_all_chars
+                _next_speaker = random.choice(_sp_candidates)
                 st.session_state["auto_next_time"] = time.time() + random.randint(30, 90)
             _auto_state["generating"] = True
             _t = threading.Thread(
