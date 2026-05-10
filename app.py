@@ -59,6 +59,7 @@ from speakers import (
 )
 from conversation_controller import (
     CONTROL_RATE, update_conv_state, MovePlanner, build_move_instruction,
+    check_output, build_retry_instruction,
 )
 
 # 自律会話スレッド状態は speakers._auto_state (rerun-safe mutable dict) を使用
@@ -602,9 +603,9 @@ with tab_auto:
                         _topic_instr = f"\n【今回の役割】この話題がひと段落したタイミングです。会話で決まったことや起きたことをチャットらしく自然にひと言でまとめ、その出来事を既成事実として扱ってください。{_interest_hint}"
                     else:
                         _topic_instr = "\n会話が一段落したと感じたら新しい話題を振ってもいい。"
-                    # ConversationController: move_type instruction を追記（メンション時は除外）
-                    if not mention_from and random.random() < CONTROL_RATE:
-                        _conv_state = update_conv_state(_log)
+                    # ConversationController: conv_state は Phase 1/2 共通で計算
+                    _conv_state = update_conv_state(_log) if not mention_from else None
+                    if _conv_state and random.random() < CONTROL_RATE:
                         _move = MovePlanner().pick_move(_conv_state)
                         _move_instr = build_move_instruction(_move, _conv_state)
                         if _move_instr:
@@ -689,6 +690,39 @@ with tab_auto:
                     # 自分の名前ラベルが本文中に埋め込まれていたら除去
                     _reply = re.sub(rf"(?<!\w){re.escape(_cname)}[:：]\s*", "", _reply)
                     _reply = normalize_model_output(_reply)
+                    # Phase 2: OutputGuardrail — NG なら1回だけ再生成
+                    if _reply and _conv_state:
+                        _is_ng, _, _ng_reasons = check_output(_reply, _conv_state)
+                        if _is_ng:
+                            _retry_instr = build_retry_instruction(_ng_reasons, _conv_state)
+                            _msgs_retry = _msgs + [
+                                {"role": "assistant", "content": _reply},
+                                {"role": "user", "content": _retry_instr},
+                            ]
+                            try:
+                                if speaker.get("is_noah"):
+                                    _reply2, _mood_val2 = call_noah_chat(_msgs_retry, timeout=120)
+                                elif speaker.get("is_hermes_agent"):
+                                    _reply2, _mood_val2 = call_hermes_agent_chat(
+                                        _msgs_retry,
+                                        profile=speaker.get("hermes_profile", "lmstudio-char"),
+                                        timeout=180,
+                                        include_mood=_has_mood,
+                                    )
+                                else:
+                                    _raw2 = call_lmstudio_chat_messages(b_url, mdl, _msgs_retry, 0.8, 150, timeout=120, background=True)
+                                    _mm2 = re.match(r"^\[MOOD:([^\]]+)\]\s*", _raw2) or re.match(r"^\[(\w+)\]\s*", _raw2)
+                                    if _mm2:
+                                        _mood_val2 = _mm2.group(1).lower()
+                                        _raw2 = _raw2[_mm2.end():]
+                                    _reply2, _mood_val2 = _raw2, _mood_val
+                                _reply2 = re.sub(rf"(?<!\w){re.escape(_cname)}[:：]\s*", "", _reply2)
+                                _reply2 = normalize_model_output(_reply2)
+                                if _reply2:
+                                    _reply = _reply2
+                                    _mood_val = _mood_val2
+                            except Exception:
+                                pass  # 失敗したら初回の _reply をそのまま使う
                     # MOOD対応: 複数スタイル持ちはMOODで speaker_id を切り替え
                     _tts_id = _speaker_from_mood(_mood_val, _char_styles, _spk_id) if _has_mood else _spk_id
                     if _reply:
