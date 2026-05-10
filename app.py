@@ -58,7 +58,8 @@ from speakers import (
     load_episodes, format_episodes_for_prompt,
 )
 from conversation_controller import (
-    CONTROL_RATE, update_conv_state, MovePlanner, build_move_instruction,
+    CONTROL_RATE, DISTINCTIVE_FPS,
+    update_conv_state, MovePlanner, build_move_instruction,
     check_output, build_retry_instruction,
 )
 
@@ -605,9 +606,12 @@ with tab_auto:
                         _topic_instr = "\n会話が一段落したと感じたら新しい話題を振ってもいい。"
                     # ConversationController: conv_state は Phase 1/2 共通で計算
                     _conv_state = update_conv_state(_log) if not mention_from else None
+                    _selected_move = ""
                     if _conv_state and random.random() < CONTROL_RATE:
-                        _move = MovePlanner().pick_move(_conv_state)
-                        _move_instr = build_move_instruction(_move, _conv_state)
+                        _selected_move = MovePlanner().pick_move(
+                            _conv_state, char_name=_cname
+                        )
+                        _move_instr = build_move_instruction(_selected_move, _conv_state)
                         if _move_instr:
                             _topic_instr += _move_instr
                     _mention_hint = "特定の誰かに話しかけたいときは「@名前、〜」の形でメンションしてもいい（例: @ずんだもん、〜）。強制ではない。"
@@ -615,12 +619,14 @@ with tab_auto:
                     _nick_block = "\n【他キャラへの呼び方（必ずこの呼び方を使う）】\n" + "\n".join(_nick_lines) if _nick_lines else ""
                     # 他キャラの一人称（代名詞と混同しないよう明示）
                     _other_fp_lines = []
+                    _other_fps_dict: dict = {}
                     for oc in all_chars:
                         if oc["name"] == _cname:
                             continue
                         oc_fp = (oc.get("calls_profile") or {}).get("first_person") or ""
                         if oc_fp:
                             _other_fp_lines.append(f"  「{oc_fp}」= {oc['name']} の一人称（名詞ではない）")
+                            _other_fps_dict[oc["name"]] = oc_fp
                     _other_fp_block = "\n【他キャラの一人称（固有名詞と混同しないこと）】\n" + "\n".join(_other_fp_lines) if _other_fp_lines else ""
                     _now = datetime.now(ZoneInfo("Asia/Tokyo"))
                     _hour = _now.hour
@@ -665,6 +671,7 @@ with tab_auto:
 - 自分も他のキャラクターも「AI」「プログラム」「キャラクター」ではなく、全員が生身の人間として存在している。AIという概念を会話に持ち込まない
 - 直近の会話履歴の発言者を正確に把握すること。「◯◯が言った」と言う場合は、必ず履歴の該当行の名前を確認し、別のキャラクターの発言と混同しない
 - 直前の他キャラの発言と同じ内容・同じ言い回しを繰り返さない。似た意見でも別の角度・言葉で表現する{f'（直前の発言: 「{_log[-1]["text"][:40]}」）' if _log else ''}
+【最重要: 一人称】あなたは「{_cname}」です。一人称は「{_fp if _fp else "私"}」のみ。{f"「{'」「'.join(fp for fp in _other_fps_dict.values() if fp in DISTINCTIVE_FPS)}」は他キャラの一人称なので絶対に使わない。" if any(fp in DISTINCTIVE_FPS for fp in _other_fps_dict.values()) else ""}
 【厳守】発言テキストのみ出力。キャラ名ラベル（「{_cname}:」等）・他キャラの発言は一切書かない。{_mood_instr}"""
                     _msgs = [
                         {"role": "system", "content": _sys},
@@ -690,11 +697,22 @@ with tab_auto:
                     # 自分の名前ラベルが本文中に埋め込まれていたら除去
                     _reply = re.sub(rf"(?<!\w){re.escape(_cname)}[:：]\s*", "", _reply)
                     _reply = normalize_model_output(_reply)
-                    # Phase 2: OutputGuardrail — NG なら1回だけ再生成
+                    # Phase 2/2.5/2.6: OutputGuardrail — NG なら1回だけ再生成
                     if _reply and _conv_state:
-                        _is_ng, _, _ng_reasons = check_output(_reply, _conv_state)
+                        _is_ng, _ng_score, _ng_reasons, _shared_words = check_output(
+                            _reply, _conv_state,
+                            own_fp=_fp,
+                            other_fps=_other_fps_dict,
+                            move_type=_selected_move,
+                        )
                         if _is_ng:
-                            _retry_instr = build_retry_instruction(_ng_reasons, _conv_state)
+                            _dbg = f"🛡 Guardrail [{_cname}] score={_ng_score} {_ng_reasons}"
+                            st.session_state["topic_debug_log"] = (
+                                [_dbg] + st.session_state.get("topic_debug_log", [])
+                            )[:20]
+                            _retry_instr = build_retry_instruction(
+                                _ng_reasons, _conv_state, shared_words=_shared_words
+                            )
                             _msgs_retry = _msgs + [
                                 {"role": "assistant", "content": _reply},
                                 {"role": "user", "content": _retry_instr},

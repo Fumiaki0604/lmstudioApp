@@ -11,18 +11,33 @@ HOOK_PATTERNS = [
     "だろうね", "したいな",
 ]
 
+# ─── 一人称分類 ───────────────────────────────────────────────────────────────
+# 強くチェックする独自一人称（被りが少なく、汚染が致命的なもの）
+DISTINCTIVE_FPS = {"ボク", "僕", "俺", "ワタクシ", "わし", "小生", "うち", "あっし"}
+# 共通になりやすい一人称（Guardrail で弱くチェック）
+COMMON_FPS = {"私", "わたし", "ワタシ", "あたし", "自分"}
+
+# ─── move_type ────────────────────────────────────────────────────────────────
 MOVE_TYPES = [
     "agree_and_extend",
     "ask",
+    "specific_question",
     "bring_new_detail",
+    "react_to_detail",
+    "assign_role",
     "tease",
     "introduce_conflict",
-    "shift",
+    "short_reaction",
     "summarize_and_close",
     "bridge",
-    "invite_other",
-    "short_reaction",
+    "soft_punchline",
     "observe",
+    "reframe",
+    "shift",
+    "care_but_move",
+    "imagine_risk",
+    "calm_reframe",
+    "invite_other",
 ]
 
 MOVE_INSTRUCTIONS = {
@@ -32,35 +47,66 @@ MOVE_INSTRUCTIONS = {
         "「〜はどう思う？」だけで終わらせず、相手が選べる具体的な選択肢を1つ以上含める。"
         "例：「味見係と混ぜる係どっちがいい？」「先に買い出し行く？それとも家にあるもので試す？」"
     ),
+    "specific_question": (
+        "直前の話題について、答えやすい具体的な質問を1つ。"
+        "「どう思う？」系は使わず、選択肢か対象を明確にする。"
+    ),
     "bring_new_detail": (
         "現在の話題に新しい具体的な要素を1つ持ち込む。"
-        "必ず 物・行動・役割 のどれかにすること。抽象語（気分転換・リラックス・楽しみ）だけで終わらない。"
-        "例（物）: お茶、毛布、カードゲーム　例（行動）: 味見する、順番を決める　例（役割）: 見張り係、寝落ち監視係"
+        "必ず 物・行動・役割 のどれかにすること。抽象語だけで終わらない。"
+        "例（物）: お茶、毛布　例（行動）: 味見する、順番を決める　例（役割）: 見張り係、寝落ち監視係"
     ),
+    "react_to_detail": (
+        "直前の具体案への感想ではなく反応を返す。"
+        "問題点・笑い・役割のどれかを1つ出す。評価で終わらない。"
+        "例：「それ、夜中にフライパン出した時点で片付け係が泣くやつでは？」"
+    ),
+    "assign_role": "今の話題で「誰が何をやるか」を1つ決める。役割・順番・担当を具体的に提案する。",
     "tease": "軽いツッコミや冗談で場の雰囲気を少し動かす。1〜2文。",
-    "introduce_conflict": "「でも〜じゃない？」と軽く別視点を出す。言い争いではなく好奇心ベース。相手の意見を否定せず、小さなズレを作る。",
-    "shift": "今の話題をひと言でまとめてから、自分の関心事で別の話題に自然につなげる。",
+    "introduce_conflict": "「でも〜じゃない？」と軽く別視点を出す。言い争いではなく好奇心ベース。小さなズレを作る。",
+    "short_reaction": "長文は不要。感情的な短いリアクション1文だけ。「えっ、それマジ？」「それは辛い」など。",
     "summarize_and_close": "今の話題を1文でまとめ、「で、次は〜」と話を次に渡す。",
     "bridge": "今の話題から連想できる別の話題への橋渡しをする。唐突な転換は避ける。",
-    "invite_other": "他のメンバーに話を振る。「〜はどう思う？」だけでなく、具体的な役割や行動を提案しながら巻き込む。",
-    "short_reaction": "長文は不要。「えっ、それマジ？」など感情的な短いリアクション1文だけ。",
+    "soft_punchline": "今の話題を軽くオチにする。完全に終わらせず、次に続けられる余白を残す。",
     "observe": "会話全体を少し引いて見た観察者的な一言を添える。断定せず余白を残す。",
+    "reframe": "今の話題を別の切り口から見直す。否定ではなく、視点をずらす。",
+    "shift": "今の話題をひと言でまとめてから、自分の関心事で別の話題に自然につなげる。",
+    "care_but_move": (
+        "相手を気遣いつつ、会話を止めずに次の行動・役割へ移す。"
+        "「〜は大丈夫？じゃあ次に〜しよう」の形式。気遣いで終わらない。"
+    ),
+    "imagine_risk": (
+        "今の案・行動について、起きそうな小さなリスクや失敗パターンを1つ出す。"
+        "深刻にせず、軽いトーンで。"
+    ),
+    "calm_reframe": "今の話題を落ち着いたトーンでまとめ直す。判断を押しつけず、別の見方を添える。",
+    "invite_other": "他のメンバーに話を振る。具体的な役割や行動を提案しながら巻き込む。",
 }
 
-# Phase 2.5: care_loop 定数
+# ─── キャラ別 move_type バイアス ──────────────────────────────────────────────
+CHAR_MOVE_BIAS: dict = {
+    "東北ずん子":  ["invite_other", "assign_role", "care_but_move"],
+    "東北きりたん": ["tease", "introduce_conflict", "short_reaction"],
+    "四国めたん":  ["summarize_and_close", "ask", "calm_reframe"],
+    "中国うさぎ":  ["observe", "bridge", "soft_punchline", "imagine_risk"],
+    "Noah":       ["observe", "bridge", "soft_punchline"],
+    "Hermes":     ["reframe", "specific_question", "introduce_conflict"],
+    "雨晴はう":   ["shift", "bring_new_detail", "invite_other"],
+    "春日部つむぎ": ["bring_new_detail", "tease", "short_reaction"],
+    "WhiteCUL":   ["reframe", "ask", "soft_punchline"],
+}
+
+# ─── care_loop 定数 ───────────────────────────────────────────────────────────
 CARE_LOOP_TERMS = [
     "休み", "休もう", "お休み", "無理", "疲れ",
     "気をつけ", "元気", "大事", "待ってる", "心配", "懸念",
-    "頑張", "無理しない", "ゆっくり", "体調", "眠れ",
+    "頑張", "ゆっくり", "体調", "眠れ",
 ]
 
-# Phase 2: OutputGuardrail 定数
+# ─── OutputGuardrail 定数 ────────────────────────────────────────────────────
 WEAK_ENDINGS = [
     "大事", "大切", "楽しもう", "楽しみ", "リラックス", "最高", "いい考え",
     "いいですね", "ですね", "だよね", "いいね", "ですよね", "だと思う",
-]
-ABSTRACT_ONLY_TERMS = [
-    "気分転換", "予定", "時間", "一日", "夜更かし", "リラックス", "気持ち",
 ]
 _CONCRETE_ACTION_RE = re.compile(
     r"[一-鿿]{2,}(?:する|した|して|したい|しよう|係|役|担当|買|作|食|飲|持|使)"
@@ -82,6 +128,16 @@ _AGREEMENT_MARKERS = [
 ]
 
 
+def _extract_content_words(text: str) -> set:
+    return set(_WORD_RE.findall(text)) - _STOP
+
+
+def _jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    return len(a & b) / len(a | b)
+
+
 @dataclass
 class ConversationState:
     current_scene: str = ""
@@ -97,12 +153,13 @@ class ConversationState:
     topic_stage: str = "active"  # active / aging / closing
     care_loop_score: float = 0.0
     should_close_topic: bool = False
+    recent_full_texts: list = field(default_factory=list)  # 直近3件の全文（Jaccard用）
 
 
 def update_conv_state(log_entries: list) -> ConversationState:
     recent = log_entries[-5:] if log_entries else []
 
-    # --- topic terms: 2文字以上・複数件に登場する語 ---
+    # --- topic terms ---
     freq: dict = {}
     for e in recent:
         words = _WORD_RE.findall(e["text"])
@@ -113,7 +170,6 @@ def update_conv_state(log_entries: list) -> ConversationState:
                 seen.add(w)
     topic_terms = [w for w, c in sorted(freq.items(), key=lambda x: -x[1]) if c >= 2][:5]
 
-    # --- current_scene ---
     if topic_terms:
         current_scene = f"{'・'.join(topic_terms[:3])}の話をしている"
     elif recent:
@@ -121,7 +177,7 @@ def update_conv_state(log_entries: list) -> ConversationState:
     else:
         current_scene = "会話開始"
 
-    # --- topic_age: current_topic_terms が連続して登場するターン数 ---
+    # --- topic_age ---
     topic_age = 0
     for e in reversed(recent):
         if topic_terms and any(t in e["text"] for t in topic_terms):
@@ -153,7 +209,6 @@ def update_conv_state(log_entries: list) -> ConversationState:
 
     should_shift = (topic_age >= 4 and repetition_score >= 0.5) or low_streak >= 3
 
-    # --- topic_stage ---
     if topic_age <= 2:
         stage = "active"
     elif topic_age <= 4:
@@ -168,13 +223,12 @@ def update_conv_state(log_entries: list) -> ConversationState:
     do_not_repeat = [e["text"][:50] for e in recent[-2:]]
 
     # --- care_loop_score ---
-    care_hits = sum(
-        1 for e in recent if any(t in e["text"] for t in CARE_LOOP_TERMS)
-    )
+    care_hits = sum(1 for e in recent if any(t in e["text"] for t in CARE_LOOP_TERMS))
     care_loop_score = care_hits / max(len(recent), 1)
-
-    # --- should_close_topic ---
     should_close = topic_age >= 5 or care_loop_score >= 0.6
+
+    # --- 直近3件の全文（Jaccard用） ---
+    recent_full_texts = [e["text"] for e in recent[-3:]]
 
     return ConversationState(
         current_scene=current_scene,
@@ -188,35 +242,47 @@ def update_conv_state(log_entries: list) -> ConversationState:
         topic_stage=stage,
         care_loop_score=care_loop_score,
         should_close_topic=should_close,
+        recent_full_texts=recent_full_texts,
     )
 
 
 class MovePlanner:
-    def pick_move(self, state: ConversationState, last_move_types: list = None) -> str:
+    def pick_move(self, state: ConversationState, last_move_types: list = None,
+                  char_name: str = "") -> str:
         last_moves = (last_move_types or [])[-3:]
 
-        # care_loop が強い → ズレを作るmove_typeを優先
+        # ステージ別ベース pool
         if state.care_loop_score >= 0.6:
             pool = ["tease", "short_reaction", "introduce_conflict", "summarize_and_close", "bridge"]
         elif state.should_close_topic:
-            pool = ["summarize_and_close", "bridge", "shift", "invite_other"]
+            pool = ["summarize_and_close", "bridge", "shift", "assign_role"]
         elif state.topic_stage == "closing":
             pool = ["shift", "bridge", "summarize_and_close", "invite_other", "short_reaction"]
         elif state.topic_stage == "aging":
-            # introduce_conflict を2枠にして出現頻度を上げる
             pool = [
-                "ask", "bring_new_detail", "tease",
+                "react_to_detail", "ask", "tease",
                 "introduce_conflict", "introduce_conflict",
-                "invite_other", "observe",
+                "assign_role", "observe",
             ]
         else:  # active
             pool = ["agree_and_extend", "ask", "bring_new_detail", "tease", "short_reaction", "observe"]
 
-        # open_hook 優先はcare_loop/close中は除外
-        if state.open_hooks and state.care_loop_score < 0.6 and not state.should_close_topic:
-            pool = ["ask", "bring_new_detail", "tease"] + pool
+        # キャラ別バイアスを pool の前に挿入（優先度を上げる）
+        char_bias = CHAR_MOVE_BIAS.get(char_name, [])
+        if char_bias:
+            pool = char_bias + pool
 
-        candidates = [m for m in pool if m not in last_moves] or pool
+        # open_hook 優先（care_loop/close 中は除外）
+        if state.open_hooks and state.care_loop_score < 0.6 and not state.should_close_topic:
+            pool = ["specific_question", "react_to_detail", "tease"] + pool
+
+        # 同 move_type の連続抑制（完全禁止でなく候補外し）
+        if len(last_moves) >= 2 and last_moves[-1] == last_moves[-2]:
+            filtered = [m for m in pool if m != last_moves[-1]]
+            pool = filtered if filtered else pool
+
+        # 直近2件の move_type は除外
+        candidates = [m for m in pool if m not in last_moves[-2:]] or pool
         return random.choice(candidates)
 
 
@@ -238,22 +304,44 @@ def build_move_instruction(move: str, state: ConversationState) -> str:
     return "\n".join(lines)
 
 
-# ─── Phase 2: OutputGuardrail ───────────────────────────────────────────────
+# ─── Phase 2 / 2.5 / 2.6: OutputGuardrail ───────────────────────────────────
 
-def check_output(reply: str, state: ConversationState) -> tuple:
-    """(is_ng: bool, ng_score: float, reasons: list[str]) を返す。"""
+def check_output(reply: str, state: ConversationState,
+                 own_fp: str = "", other_fps: dict = None,
+                 move_type: str = "") -> tuple:
+    """(is_ng, ng_score, reasons, shared_words) を返す。"""
     ng_score = 0.0
     reasons = []
+    shared_words: list = []
+    other_fps = other_fps or {}
 
-    # 1. repeated_term が文頭付近に出ているか
+    reply_words = _extract_content_words(reply)
+
+    # ── 1. 一人称汚染チェック（最優先）────────────────────────────────────
+    for name, fp in other_fps.items():
+        if not fp or fp == own_fp:
+            continue
+        if fp in DISTINCTIVE_FPS and fp in reply:
+            # 引用（「ボク」）は弱め、それ以外は即NG水準
+            if f"「{fp}」" in reply or f"『{fp}』" in reply:
+                ng_score += 0.2
+                reasons.append(f"他キャラ（{name}）の一人称「{fp}」を引用（弱めペナルティ）")
+            else:
+                ng_score += 0.6
+                reasons.append(f"他キャラ（{name}）の一人称「{fp}」を使用")
+        elif fp in COMMON_FPS and fp != own_fp and fp in reply and own_fp not in reply:
+            # 自分の一人称が出ていないのに他の一人称が出ている場合のみ弱くチェック
+            ng_score += 0.2
+            reasons.append(f"一人称が不明確（「{fp}」が出ているが「{own_fp}」が出ていない）")
+
+    # ── 2. 文頭繰り返し語 ────────────────────────────────────────────────
     for term in state.current_topic_terms:
-        # 文頭 or 「〜は/が/も/で/、」で始まる場合
         if re.match(rf"^{re.escape(term)}[はがもでの、]?", reply):
             ng_score += 0.4
             reasons.append(f"文頭に繰り返し語「{term}」")
             break
 
-    # 2. 弱い結び + 具体要素なし
+    # ── 3. 弱い結び + 具体要素なし ─────────────────────────────────────
     has_weak = any(reply.endswith(w) or reply.endswith(w + "。") or reply.endswith(w + "！")
                    for w in WEAK_ENDINGS)
     has_concrete = bool(_CONCRETE_ACTION_RE.search(reply))
@@ -261,40 +349,76 @@ def check_output(reply: str, state: ConversationState) -> tuple:
         ng_score += 0.3
         reasons.append("抽象的な結びのみ（具体的な物・行動・役割なし）")
 
-    # 3. do_not_repeat と語レベルで高重複
-    reply_words = set(_WORD_RE.findall(reply)) - _STOP
+    # ── 4. do_not_repeat との語重複 ──────────────────────────────────────
     for phrase in state.do_not_repeat:
-        phrase_words = set(_WORD_RE.findall(phrase)) - _STOP
-        if phrase_words and len(reply_words & phrase_words) >= 2:
+        phrase_words = _extract_content_words(phrase)
+        overlap = reply_words & phrase_words
+        if len(overlap) >= 2:
             ng_score += 0.4
-            overlap = list(reply_words & phrase_words)[:2]
-            reasons.append(f"直近発言と語重複（{'・'.join(overlap)}）")
+            reasons.append(f"直近発言と語重複（{'・'.join(list(overlap)[:2])}）")
             break
 
-    # 4. care_loop_intent: 気遣い系語 + state の care_loop_score が高い + 具体要素なし
+    # ── 5. care_loop_intent ───────────────────────────────────────────────
     if state.care_loop_score >= 0.5 and not has_concrete:
         care_hits = sum(1 for t in CARE_LOOP_TERMS if t in reply)
         if care_hits >= 1:
             ng_score += 0.4
             reasons.append("気遣いループ継続（休み・無理・元気だけで終わっている）")
 
-    # 5. generic_question: 「どう思う？」系で選択肢なし
+    # ── 6. 汎用質問（「どう思う？」系） ──────────────────────────────────
     if re.search(r"どう思[うう][？?]|どうでしょう[？?]|どう感じ", reply):
         if not re.search(r"どっち|どちら|どれ|するのと|にする[？?]", reply):
             ng_score += 0.3
             reasons.append("汎用質問（「どう思う？」系・選択肢なし）")
 
+    # ── 7. RecentSimilarityGuard（Phase 2.6） ────────────────────────────
+    # short_reaction は類似度チェックを緩める
+    if move_type != "short_reaction" and state.recent_full_texts and reply_words:
+        best_shared: set = set()
+        best_jaccard = 0.0
+        for text in state.recent_full_texts:
+            other_words = _extract_content_words(text)
+            j = _jaccard(reply_words, other_words)
+            s = reply_words & other_words
+            if j > best_jaccard or len(s) > len(best_shared):
+                best_jaccard = j
+                best_shared = s
+
+        shared_words = list(best_shared)
+        shared_count = len(best_shared)
+        # 共有語 >= 5 はクローン（単独NG水準）、3-4 語 + Jaccard は組み合わせで判定
+        if shared_count >= 5:
+            ng_score += 0.6
+            reasons.append(f"直前発話とほぼ同内容（共有語: {'・'.join(shared_words[:4])}）")
+        elif (best_jaccard >= 0.35 and shared_count >= 3) or shared_count >= 4:
+            ng_score += 0.5
+            reasons.append(f"直前発話と内容が近すぎる（共有語: {'・'.join(shared_words[:4])}）")
+
     is_ng = ng_score >= 0.6
-    return is_ng, round(ng_score, 2), reasons
+    return is_ng, round(ng_score, 2), reasons, shared_words
 
 
-def build_retry_instruction(reasons: list, state: ConversationState) -> str:
+def build_retry_instruction(reasons: list, state: ConversationState,
+                            shared_words: list = None) -> str:
     lines = ["【再生成】前の発言に問題があったため書き直してください。"]
-    for r in reasons:
+
+    # 一人称崩れを最優先で表示
+    fp_issues = [r for r in reasons if "一人称" in r]
+    other_issues = [r for r in reasons if "一人称" not in r]
+    for r in fp_issues + other_issues:
         lines.append(f"- {r}")
+
+    # 発話類似・なぞりへの対処は「役割変更」を指示
+    if any("直前発話" in r or "内容が近" in r or "語重複" in r for r in reasons):
+        lines.append("- 言い換えではなく、会話の機能を変えてください：")
+        lines.append("  問題点を出す / 役割を決める / 別キャラに振る / 小さく茶化す / 次の行動を決める")
+        if shared_words:
+            lines.append(f"- 特に「{'・'.join(shared_words[:4])}」を中心に使わないこと")
+
     if state.current_topic_terms:
         terms = "・".join(state.current_topic_terms[:3])
         lines.append(f"- 「{terms}」を文頭・主語に置かない（文中での自然な使用はOK）")
+
     lines.append("- 「どう思う？」だけで終わる質問は禁止。選択肢か具体対象を含める")
     lines.append("- 「楽しもう」「大事」「リラックス」などの抽象的な結びを避け、物・行動・役割を含める")
     lines.append("1〜2文で書き直してください。")
