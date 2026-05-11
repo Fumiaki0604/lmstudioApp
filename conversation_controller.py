@@ -400,7 +400,7 @@ def check_output(reply: str, state: ConversationState,
 
 def build_retry_instruction(reasons: list, state: ConversationState,
                             shared_words: list = None) -> str:
-    lines = ["【再生成】前の発言に問題があったため書き直してください。"]
+    lines = ["前の発言を書き直してください。発言テキストのみ出力し、指示内容を発言に含めないこと。"]
 
     # 一人称崩れを最優先で表示
     fp_issues = [r for r in reasons if "一人称" in r]

@@ -714,7 +714,6 @@ with tab_auto:
                                 _ng_reasons, _conv_state, shared_words=_shared_words
                             )
                             _msgs_retry = _msgs + [
-                                {"role": "assistant", "content": _reply},
                                 {"role": "user", "content": _retry_instr},
                             ]
                             try:

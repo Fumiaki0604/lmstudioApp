@@ -257,6 +257,7 @@ def normalize_model_output(text: str) -> str:
     text = re.sub(r"\[MOOD:[^\]]+\]\s*", "", text)
     # （話題提供）がLLMにechoされた場合は除去
     text = re.sub(r"[（(]話題提供[）)]\s*", "", text)
+    text = re.sub(r"[（(]再生成[）)]\s*", "", text)
     text = re.sub(r"[（(]※[^（(）)]*[）)]?", "", text)
     text = re.sub(r"\s*[（(][^（(]{0,60}(?:文以内|注釈|日本語のみ|英語)[^）)]{0,40}[）)]?\s*", " ", text)
     lines = text.split("\n")
