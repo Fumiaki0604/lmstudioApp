@@ -38,6 +38,7 @@ MOVE_TYPES = [
     "imagine_risk",
     "calm_reframe",
     "invite_other",
+    "process_risk",
 ]
 
 MOVE_INSTRUCTIONS = {
@@ -81,18 +82,19 @@ MOVE_INSTRUCTIONS = {
     ),
     "calm_reframe": "今の話題を落ち着いたトーンでまとめ直す。判断を押しつけず、別の見方を添える。",
     "invite_other": "他のメンバーに話を振る。具体的な役割や行動を提案しながら巻き込む。",
+    "process_risk": "怖い・面倒・難しいという懸念を、やめる理由ではなく役割分担・罰ゲーム・ゲーム化に変えてください。「〜係」「〜したら負け」の形で具体的に処理する。",
 }
 
 # ─── キャラ別 move_type バイアス ──────────────────────────────────────────────
 CHAR_MOVE_BIAS: dict = {
-    "東北ずん子":  ["invite_other", "assign_role", "care_but_move"],
+    "東北ずん子":  ["invite_other", "assign_role", "care_but_move", "process_risk"],
     "東北きりたん": ["tease", "introduce_conflict", "short_reaction"],
     "四国めたん":  ["summarize_and_close", "ask", "calm_reframe"],
     "中国うさぎ":  ["observe", "bridge", "soft_punchline", "imagine_risk"],
     "Noah":       ["observe", "bridge", "soft_punchline"],
     "Hermes":     ["reframe", "specific_question", "introduce_conflict"],
     "雨晴はう":   ["shift", "bring_new_detail", "invite_other"],
-    "春日部つむぎ": ["bring_new_detail", "tease", "short_reaction"],
+    "春日部つむぎ": ["bring_new_detail", "tease", "short_reaction", "process_risk"],
     "WhiteCUL":   ["reframe", "ask", "soft_punchline"],
 }
 
@@ -154,6 +156,7 @@ class ConversationState:
     care_loop_score: float = 0.0
     should_close_topic: bool = False
     recent_full_texts: list = field(default_factory=list)  # 直近3件の全文（Jaccard用）
+    suppressed_terms: list = field(default_factory=list)  # 一度離れた話題の語
 
 
 def update_conv_state(log_entries: list) -> ConversationState:
@@ -230,6 +233,22 @@ def update_conv_state(log_entries: list) -> ConversationState:
     # --- 直近3件の全文（Jaccard用） ---
     recent_full_texts = [e["text"] for e in recent[-3:]]
 
+    # --- suppressed_terms: 一度話題になったが直近3件では出ていない語 ---
+    suppressed_terms: list = []
+    if len(log_entries) >= 8:
+        old_entries = log_entries[-10:-3]
+        recent3_entries = log_entries[-3:]
+        old_freq: dict = {}
+        for e in old_entries:
+            for w in _WORD_RE.findall(e.get("text", "")):
+                if w not in _STOP:
+                    old_freq[w] = old_freq.get(w, 0) + 1
+        recent3_words = {
+            w for e in recent3_entries
+            for w in _WORD_RE.findall(e.get("text", "")) if w not in _STOP
+        }
+        suppressed_terms = [w for w, cnt in old_freq.items() if cnt >= 2 and w not in recent3_words][:6]
+
     return ConversationState(
         current_scene=current_scene,
         current_topic_terms=topic_terms,
@@ -243,6 +262,7 @@ def update_conv_state(log_entries: list) -> ConversationState:
         care_loop_score=care_loop_score,
         should_close_topic=should_close,
         recent_full_texts=recent_full_texts,
+        suppressed_terms=suppressed_terms,
     )
 
 
@@ -334,6 +354,14 @@ def check_output(reply: str, state: ConversationState,
             ng_score += 0.2
             reasons.append(f"一人称が不明確（「{fp}」が出ているが「{own_fp}」が出ていない）")
 
+    # ── 1b. own_fp 強制チェック ──────────────────────────────────────────
+    if own_fp:
+        ALL_FPS = DISTINCTIVE_FPS | COMMON_FPS | {own_fp}
+        used_fps = {fp for fp in ALL_FPS if fp in reply}
+        if used_fps and own_fp not in used_fps:
+            ng_score += 0.4
+            reasons.append(f"一人称が「{own_fp}」でなく「{'・'.join(sorted(used_fps))}」になっている")
+
     # ── 2. 文頭繰り返し語 ────────────────────────────────────────────────
     for term in state.current_topic_terms:
         if re.match(rf"^{re.escape(term)}[はがもでの、]?", reply):
@@ -364,6 +392,13 @@ def check_output(reply: str, state: ConversationState,
         if care_hits >= 1:
             ng_score += 0.4
             reasons.append("気遣いループ継続（休み・無理・元気だけで終わっている）")
+
+    # ── 5b. suppressed_terms チェック ────────────────────────────────────
+    if state.suppressed_terms and move_type not in ("summarize_and_close", "bridge", "process_risk"):
+        hits = [w for w in state.suppressed_terms if w in reply_words]
+        if len(hits) >= 2:
+            ng_score += 0.4
+            reasons.append(f"一度離れた話題に戻っている（{'・'.join(hits[:3])}）")
 
     # ── 6. 汎用質問（「どう思う？」系） ──────────────────────────────────
     if re.search(r"どう思[うう][？?]|どうでしょう[？?]|どう感じ", reply):
