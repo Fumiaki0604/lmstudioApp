@@ -39,6 +39,9 @@ MOVE_TYPES = [
     "calm_reframe",
     "invite_other",
     "process_risk",
+    "reflect_on_event",
+    "mark_event_expired",
+    "next_day_followup",
 ]
 
 MOVE_INSTRUCTIONS = {
@@ -83,15 +86,18 @@ MOVE_INSTRUCTIONS = {
     "calm_reframe": "今の話題を落ち着いたトーンでまとめ直す。判断を押しつけず、別の見方を添える。",
     "invite_other": "他のメンバーに話を振る。具体的な役割や行動を提案しながら巻き込む。",
     "process_risk": "怖い・面倒・難しいという懸念を、やめる理由ではなく役割分担・罰ゲーム・ゲーム化に変えてください。「〜係」「〜したら負け」の形で具体的に処理する。",
+    "reflect_on_event": "過去に出た企画・計画について、実施後の感想や「結局どうなったか」を1文で話す。準備話には戻らない。既成事実として扱う。",
+    "mark_event_expired": "数日前・数時間前の企画を「流れた話」として軽く閉じ、次の話題への橋渡しをする。過去形で扱い、今も準備中にしない。",
+    "next_day_followup": "前回の企画の結果を受けて、次に何をするかへ進める。結果はポジティブでも中立でもよい。準備に戻らない。",
 }
 
 # ─── キャラ別 move_type バイアス ──────────────────────────────────────────────
 CHAR_MOVE_BIAS: dict = {
     "東北ずん子":  ["invite_other", "assign_role", "care_but_move", "process_risk"],
     "東北きりたん": ["tease", "introduce_conflict", "short_reaction"],
-    "四国めたん":  ["summarize_and_close", "ask", "calm_reframe"],
+    "四国めたん":  ["summarize_and_close", "ask", "calm_reframe", "reflect_on_event"],
     "中国うさぎ":  ["observe", "bridge", "soft_punchline", "imagine_risk"],
-    "Noah":       ["observe", "bridge", "soft_punchline"],
+    "Noah":       ["observe", "bridge", "soft_punchline", "reflect_on_event", "mark_event_expired"],
     "Hermes":     ["reframe", "specific_question", "introduce_conflict"],
     "雨晴はう":   ["shift", "bring_new_detail", "invite_other"],
     "春日部つむぎ": ["bring_new_detail", "tease", "short_reaction", "process_risk"],
@@ -141,6 +147,15 @@ def _jaccard(a: set, b: set) -> float:
 
 
 @dataclass
+class TopicMemory:
+    label: str
+    terms: list
+    consumed_as: str
+    allowed_reuse_as: list
+    cooldown_turns: int = 4
+
+
+@dataclass
 class ConversationState:
     current_scene: str = ""
     current_topic_terms: list = field(default_factory=list)
@@ -156,7 +171,8 @@ class ConversationState:
     care_loop_score: float = 0.0
     should_close_topic: bool = False
     recent_full_texts: list = field(default_factory=list)  # 直近3件の全文（Jaccard用）
-    suppressed_terms: list = field(default_factory=list)  # 一度離れた話題の語
+    consumed_topics: list = field(default_factory=list)   # 消化済み話題（TopicMemory）
+    active_goal: str = ""                                  # 現在の会話目標（EventMemoryから注入）
 
 
 def update_conv_state(log_entries: list) -> ConversationState:
@@ -233,8 +249,8 @@ def update_conv_state(log_entries: list) -> ConversationState:
     # --- 直近3件の全文（Jaccard用） ---
     recent_full_texts = [e["text"] for e in recent[-3:]]
 
-    # --- suppressed_terms: 一度話題になったが直近3件では出ていない語 ---
-    suppressed_terms: list = []
+    # --- consumed_topics: 一度話題になったが直近3件では出ていない語群 ---
+    consumed_topics: list = []
     if len(log_entries) >= 8:
         old_entries = log_entries[-10:-3]
         recent3_entries = log_entries[-3:]
@@ -247,7 +263,15 @@ def update_conv_state(log_entries: list) -> ConversationState:
             w for e in recent3_entries
             for w in _WORD_RE.findall(e.get("text", "")) if w not in _STOP
         }
-        suppressed_terms = [w for w, cnt in old_freq.items() if cnt >= 2 and w not in recent3_words][:6]
+        consumed_words = [w for w, cnt in old_freq.items() if cnt >= 2 and w not in recent3_words][:8]
+        if consumed_words:
+            label_words = sorted(consumed_words, key=lambda w: old_freq.get(w, 0), reverse=True)[:3]
+            consumed_topics = [TopicMemory(
+                label="・".join(label_words),
+                terms=consumed_words,
+                consumed_as="話し合った話題",
+                allowed_reuse_as=["役割分担", "失敗", "オチ", "次の行動"],
+            )]
 
     return ConversationState(
         current_scene=current_scene,
@@ -262,7 +286,7 @@ def update_conv_state(log_entries: list) -> ConversationState:
         care_loop_score=care_loop_score,
         should_close_topic=should_close,
         recent_full_texts=recent_full_texts,
-        suppressed_terms=suppressed_terms,
+        consumed_topics=consumed_topics,
     )
 
 
@@ -320,6 +344,15 @@ def build_move_instruction(move: str, state: ConversationState) -> str:
     if state.topic_stage in ("aging", "closing") and state.current_topic_terms:
         terms = "・".join(state.current_topic_terms[:3])
         lines.append(f"- 「{terms}」を文頭・主語に使わない。話を一歩前へ進める。")
+
+    if state.consumed_topics:
+        for ct in state.consumed_topics:
+            t_str = "・".join(ct.terms[:4])
+            r_str = "・".join(ct.allowed_reuse_as[:3])
+            lines.append(f"- 「{t_str}」はすでに話した話題です。同じ話題として繰り返さず、{r_str}として扱ってください。")
+
+    if state.active_goal:
+        lines.append(f"- 現在の会話目標: 「{state.active_goal}」を進める。準備の話に戻らない。")
 
     return "\n".join(lines)
 
@@ -393,13 +426,6 @@ def check_output(reply: str, state: ConversationState,
             ng_score += 0.4
             reasons.append("気遣いループ継続（休み・無理・元気だけで終わっている）")
 
-    # ── 5b. suppressed_terms チェック ────────────────────────────────────
-    if state.suppressed_terms and move_type not in ("summarize_and_close", "bridge", "process_risk"):
-        hits = [w for w in state.suppressed_terms if w in reply_words]
-        if len(hits) >= 2:
-            ng_score += 0.4
-            reasons.append(f"一度離れた話題に戻っている（{'・'.join(hits[:3])}）")
-
     # ── 6. 汎用質問（「どう思う？」系） ──────────────────────────────────
     if re.search(r"どう思[うう][？?]|どうでしょう[？?]|どう感じ", reply):
         if not re.search(r"どっち|どちら|どれ|するのと|にする[？?]", reply):
@@ -458,3 +484,98 @@ def build_retry_instruction(reasons: list, state: ConversationState,
     lines.append("- 「楽しもう」「大事」「リラックス」などの抽象的な結びを避け、物・行動・役割を含める")
     lines.append("1〜2文で書き直してください。")
     return "\n".join(lines)
+
+
+# ─── Phase 2.7: FinalReplySanitizer ──────────────────────────────────────────
+
+_META_INLINE_RE = re.compile(
+    r"[（(]注[:：][^）)]{0,150}[）)]?"
+    r"|[（(]再生成[）)]"
+)
+_META_LINE_KEYWORDS = [
+    "元の指示", "指示内容", "書き直し", "避けることだったが",
+    "システムプロンプト", "文頭・主語", "文頭や主語",
+]
+_CHAR_FALLBACKS: dict = {
+    "東北ずん子":   "……ちょっと、考えてみます。",
+    "東北きりたん": "……まぁ、そういうこともあるよね。",
+    "四国めたん":   "……少し整理させてください。",
+    "Noah":        "……そうですね。",
+    "Hermes":      "……なるほど。",
+    "ずんだもん":   "……うーん、なのだ。",
+    "雨晴はう":    "……ボクもそう思う。",
+    "春日部つむぎ": "……あーし、考え中っす。",
+    "WhiteCUL":    "……ちょっと待ってね。",
+    "中国うさぎ":   "……うさぎ、考えてる。",
+    "東北イタコ":   "……少し間を置かせてもらいます。",
+}
+_DEFAULT_FALLBACK = "……少し考え直しますね。"
+
+
+def get_char_fallback(name: str) -> str:
+    return _CHAR_FALLBACKS.get(name, _DEFAULT_FALLBACK)
+
+
+def _looks_truncated(text: str) -> bool:
+    if not text or len(text) < 5:
+        return False
+    if text[-1] in "。！？!?…」』～":
+        return False
+    if len(text) <= 20:
+        return False
+    last_end = max(text.rfind("。"), text.rfind("！"), text.rfind("？"),
+                   text.rfind("!"), text.rfind("?"))
+    if last_end >= 0 and len(text) - last_end > 10:
+        return True
+    if last_end < 0:
+        return True
+    return False
+
+
+def _truncate_at_last_sentence(text: str) -> str:
+    last = max(text.rfind("。"), text.rfind("！"), text.rfind("？"),
+               text.rfind("!"), text.rfind("?"))
+    return text[:last + 1] if last >= 0 else ""
+
+
+def sanitize_reply(reply: str, speaker_name: str = "", own_fp: str = "",
+                   prev_speaker_text: str = "", prev_speaker_fp: str = "") -> tuple:
+    """(is_ng, ng_score, reasons) — 会話状態非依存の出力品質チェック。"""
+    ng_score = 0.0
+    reasons = []
+
+    # ── 1. メタ文検出（インライン括弧 + 行単位）────────────────────────────
+    if _META_INLINE_RE.search(reply):
+        ng_score += 0.8
+        reasons.append("メタ注釈/再生成タグ混入")
+    else:
+        for line in reply.split("\n"):
+            if any(kw in line for kw in _META_LINE_KEYWORDS):
+                ng_score += 0.8
+                reasons.append(f"メタ行混入: {line[:40]}")
+                break
+
+    # ── 2. 自分宛てメンション────────────────────────────────────────────────
+    if speaker_name and f"@{speaker_name}" in reply:
+        ng_score += 0.8
+        reasons.append("自分宛てメンション")
+
+    # ── 3. 途中切れ ────────────────────────────────────────────────────────
+    if _looks_truncated(reply):
+        ng_score += 0.8
+        reasons.append("文が途中で切れている")
+
+    # ── 4. 直前話者からの動的汚染検出────────────────────────────────────────
+    if prev_speaker_text and prev_speaker_fp and prev_speaker_fp != own_fp:
+        if prev_speaker_fp in reply:
+            ng_score += 0.7
+            reasons.append(f"直前話者の一人称「{prev_speaker_fp}」を使用")
+        else:
+            prev_hira = set(re.findall(r"[ぁ-ゟ]{3,4}", prev_speaker_text)) - _STOP
+            hits = [t for t in prev_hira if t in reply]
+            if len(hits) >= 2:
+                ng_score += 0.4
+                reasons.append(f"直前話者の特徴的語句を流用（{'・'.join(hits[:3])}）")
+
+    is_ng = ng_score >= 0.6
+    return is_ng, round(ng_score, 2), reasons

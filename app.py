@@ -61,6 +61,15 @@ from conversation_controller import (
     CONTROL_RATE, DISTINCTIVE_FPS,
     update_conv_state, MovePlanner, build_move_instruction,
     check_output, build_retry_instruction,
+    sanitize_reply, get_char_fallback, _truncate_at_last_sentence,
+)
+from event_memory import (
+    TimeContext,
+    load_candidates, save_candidates,
+    load_events, save_events,
+    load_resolved, save_resolved,
+    resolve_events, update_event_candidates,
+    build_event_context_prompt, classify_event_intent,
 )
 
 # 自律会話スレッド状態は speakers._auto_state (rerun-safe mutable dict) を使用
@@ -580,6 +589,10 @@ with tab_auto:
                     _personality = speaker.get("personality") or "フレンドリー"
                     _others = [c["name"] for c in all_chars if c["name"] != _cname]
                     _log = _auto_load_log()
+                    # Phase 3: EventMemory 読み込み
+                    _em_candidates = load_candidates()
+                    _em_events = load_events()
+                    _em_resolved = load_resolved()
                     _recent = _log[-3:]
                     _hist = "\n".join([f"【{m['name']}】{m['text']}" for m in _recent]) if _recent else "（まだ会話が始まっていません）"
                     _soul = _load_soul(_cname)
@@ -655,9 +668,16 @@ with tab_auto:
                         _score = _affinities.get(_oc_name, 50)
                         _affinity_lines.append(f"  {affinity_behavior(_score, _oc_name)}")
                     _affinity_block = "\n【各メンバーへの親密度と接し方】\n" + "\n".join(_affinity_lines) if _affinity_lines else ""
+                    # Phase 3: TimeContext + EventMemory context
+                    _em_time_ctx = TimeContext.from_now(_now, _log)
+                    _event_ctx_block = ""
+                    if _em_events or _em_resolved:
+                        _event_ctx_block = "\n" + build_event_context_prompt(
+                            _em_events, _em_resolved, _em_time_ctx
+                        )
                     _sys = f"""あなたは「{_cname}」です。以下の性格・口調で話してください。
 {_personality}
-{f'一人称: 「{_fp}」' if _fp else ''}{_soul_block}{_nick_block}{_other_fp_block}{_affinity_block}
+{f'一人称: 「{_fp}」' if _fp else ''}{_soul_block}{_nick_block}{_other_fp_block}{_affinity_block}{_event_ctx_block}
 
 【現在の時間帯】{_period}（{_now.strftime("%H:%M")}）{f' {_time_ctx}' if _time_ctx else ''}
 【状況】{' / '.join(_others)}と一緒にいて、自由に雑談しています。{_topic_instr}
@@ -740,6 +760,29 @@ with tab_auto:
                                     _mood_val = _mood_val2
                             except Exception:
                                 pass  # 失敗したら初回の _reply をそのまま使う
+                    # Phase 2.7: FinalReplySanitizer
+                    if _reply:
+                        _prev_entry = _log[-1] if _log else {}
+                        _prev_spk_fp = ""
+                        for _oc in all_chars:
+                            if _oc["name"] == _prev_entry.get("name", ""):
+                                _prev_spk_fp = (_oc.get("calls_profile") or {}).get("first_person") or ""
+                                break
+                        _san_ng, _san_score, _san_reasons = sanitize_reply(
+                            _reply, speaker_name=_cname, own_fp=_fp,
+                            prev_speaker_text=_prev_entry.get("text", ""),
+                            prev_speaker_fp=_prev_spk_fp,
+                        )
+                        if _san_ng:
+                            _san_dbg = f"🚫 Sanitizer [{_cname}] score={_san_score} {_san_reasons}"
+                            st.session_state["topic_debug_log"] = (
+                                [_san_dbg] + st.session_state.get("topic_debug_log", [])
+                            )[:20]
+                            if any("途中" in r for r in _san_reasons):
+                                _fixed = _truncate_at_last_sentence(_reply)
+                                _reply = _fixed if _fixed else get_char_fallback(_cname)
+                            else:
+                                _reply = get_char_fallback(_cname)
                     # MOOD対応: 複数スタイル持ちはMOODで speaker_id を切り替え
                     _tts_id = _speaker_from_mood(_mood_val, _char_styles, _spk_id) if _has_mood else _spk_id
                     if _reply:
@@ -747,11 +790,30 @@ with tab_auto:
                         _log.append({
                             "name": _cname,
                             "text": _reply,
-                            "time": datetime.now(ZoneInfo("Asia/Tokyo")).strftime("%H:%M"),
+                            "time": _now.strftime("%H:%M"),
+                            "timestamp": _now.isoformat(),
                             "icon": speaker.get("icon", ""),
                             "speaker_id": _tts_id,
                         })
                         _auto_save_log(_log)
+                        # Phase 3: EventIntentClassifier + EventResolver (post-save)
+                        try:
+                            _recent_ctx = "\n".join(
+                                f"【{m['name']}】{m['text']}" for m in _log[-3:]
+                            )
+                            _clf = classify_event_intent(_reply, _cname, _recent_ctx, b_url, mdl)
+                            _em_candidates, _em_events = update_event_candidates(
+                                _clf, _reply, _cname, _now, _em_candidates, _em_events
+                            )
+                            _em_events, _em_resolved_new = resolve_events(
+                                _em_events, _em_resolved, _now, b_url, mdl
+                            )
+                            save_candidates(_em_candidates)
+                            save_events(_em_events)
+                            if len(_em_resolved_new) != len(_em_resolved):
+                                save_resolved(_em_resolved_new)
+                        except Exception:
+                            pass
                         # 10ターンごとに各キャラの記憶に書き戻す
                 except Exception as e:
                     import requests as _req
