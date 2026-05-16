@@ -246,8 +246,31 @@ _SYSTEM_PROMPT_LEAK_PATTERNS = re.compile(
     r")",
 )
 _HEADING_LEAK_PATTERNS = re.compile(
-    r"^【(会話の状況|ルール|絶対厳守|呼び名ルール|反応のルール|一緒にいる相手)】"
+    r"^【(会話の状況|ルール|絶対厳守|呼び名ルール|反応のルール|一緒にいる相手|注意|発言|指示|補足)】"
 )
+
+
+def _remove_repeated_tail(text: str) -> str:
+    """末尾に同一文が繰り返されている場合、最初の1回だけ残す。"""
+    sentences = re.split(r"(?<=[。！？!?])", text)
+    sentences = [s for s in sentences if s.strip()]
+    if len(sentences) < 2:
+        return text
+    seen = []
+    for s in sentences:
+        norm = re.sub(r"\s+", "", s)
+        if norm and norm not in seen:
+            seen.append(norm)
+    if len(seen) == len(sentences):
+        return text
+    result = ""
+    used = set()
+    for s in sentences:
+        norm = re.sub(r"\s+", "", s)
+        if norm not in used:
+            result += s
+            used.add(norm)
+    return result.strip()
 
 
 def normalize_model_output(text: str) -> str:
@@ -276,4 +299,5 @@ def normalize_model_output(text: str) -> str:
         else:
             last = labeled_lines[-1]
             text = label_pattern.sub("", last).strip()
+    text = _remove_repeated_tail(text)
     return text

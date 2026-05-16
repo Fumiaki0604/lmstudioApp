@@ -781,6 +781,26 @@ with tab_auto:
                             if any("途中" in r for r in _san_reasons):
                                 _fixed = _truncate_at_last_sentence(_reply)
                                 _reply = _fixed if _fixed else get_char_fallback(_cname)
+                            elif not speaker.get("is_noah") and not speaker.get("is_hermes_agent"):
+                                # LM Studio キャラ: fallback前に1回再生成を試みる
+                                try:
+                                    _raw_s2 = call_lmstudio_chat_messages(
+                                        b_url, mdl, _msgs, 0.9, 150, timeout=90, background=True
+                                    )
+                                    _mm_s2 = re.match(r"^\[MOOD:([^\]]+)\]\s*", _raw_s2) or re.match(r"^\[(\w+)\]\s*", _raw_s2)
+                                    if _mm_s2:
+                                        _mood_val = _mm_s2.group(1).lower()
+                                        _raw_s2 = _raw_s2[_mm_s2.end():]
+                                    _raw_s2 = re.sub(rf"(?<!\w){re.escape(_cname)}[:：]\s*", "", _raw_s2)
+                                    _raw_s2 = normalize_model_output(_raw_s2)
+                                    _san_ng2, _, _ = sanitize_reply(
+                                        _raw_s2, speaker_name=_cname, own_fp=_fp,
+                                        prev_speaker_text=_prev_entry.get("text", ""),
+                                        prev_speaker_fp=_prev_spk_fp,
+                                    )
+                                    _reply = _raw_s2 if (_raw_s2 and not _san_ng2) else get_char_fallback(_cname)
+                                except Exception:
+                                    _reply = get_char_fallback(_cname)
                             else:
                                 _reply = get_char_fallback(_cname)
                     # MOOD対応: 複数スタイル持ちはMOODで speaker_id を切り替え

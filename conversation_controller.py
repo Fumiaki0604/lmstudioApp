@@ -451,7 +451,10 @@ def check_output(reply: str, state: ConversationState,
         if shared_count >= 5:
             ng_score += 0.6
             reasons.append(f"直前発話とほぼ同内容（共有語: {'・'.join(shared_words[:4])}）")
-        elif (best_jaccard >= 0.35 and shared_count >= 3) or shared_count >= 4:
+        elif shared_count >= 4:
+            ng_score += 0.6
+            reasons.append(f"直前発話と内容が近すぎる（共有語: {'・'.join(shared_words[:4])}）")
+        elif best_jaccard >= 0.35 and shared_count >= 3:
             ng_score += 0.5
             reasons.append(f"直前発話と内容が近すぎる（共有語: {'・'.join(shared_words[:4])}）")
 
