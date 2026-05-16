@@ -897,10 +897,10 @@ with tab_auto:
                 # アイコンは常に現在のspeaker_dataを優先（ログ埋め込みは変更追従しないため）
                 _entry_name = entry.get("name", "")
                 icon_path = (_disp_spk_data.get(_entry_name, {}).get("icon") or entry.get("icon", ""))
-                col_icon, col_msg = st.columns([2, 10])
+                col_icon, col_msg = st.columns([1.5, 10])
                 with col_icon:
                     if icon_path and os.path.exists(icon_path):
-                        st.image(icon_path, width=80)
+                        st.image(icon_path, width=60)
                     else:
                         st.write("👤")
                 with col_msg:
