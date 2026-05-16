@@ -28,6 +28,7 @@ from tts import (
     get_voicevox_user_dict, add_voicevox_dict_word, delete_voicevox_dict_word,
 )
 from chat import (
+    _URL_RE, get_url_summary, fetch_and_cache_url,
     DEFAULT_UA, NOAH_GATEWAY_URL, NOAH_GATEWAY_TOKEN, _OPENCLAW_WORKSPACE,
     is_chat_model, lmstudio_models, call_lmstudio_chat_messages,
     call_noah_chat, call_char_chat, call_hermes_agent, call_hermes_agent_chat,
@@ -603,6 +604,14 @@ with tab_auto:
                     _ep_list = load_episodes(_cname, limit=5)
                     _ep_fmt = format_episodes_for_prompt(_ep_list)
                     _ep_block = f"\n\n【直近の出来事（具体的な記憶）】\n{_ep_fmt}" if _ep_fmt else ""
+                    # 直近ログに含まれるURLのキャッシュ済み要約を注入
+                    _url_summaries = []
+                    for _le in _log[-6:]:
+                        for _u in _URL_RE.findall(_le.get("text", "")):
+                            _s = get_url_summary(_u)
+                            if _s:
+                                _url_summaries.append(f"・{_u}\n  {_s}")
+                    _url_ctx_block = "\n\n【参照ページ要約】\n" + "\n".join(_url_summaries) if _url_summaries else ""
                     # 話題転換: クールダウン中 or 直近ループ検出でsoul固有話題を注入
                     _cooldown = st.session_state.get("topic_change_cooldown", 0)
                     if mention_from:
@@ -683,7 +692,7 @@ with tab_auto:
                         )
                     _sys = f"""あなたは「{_cname}」です。以下の性格・口調で話してください。
 {_personality}
-{f'一人称: 「{_fp}」' if _fp else ''}{_soul_block}{_ep_block}{_nick_block}{_other_fp_block}{_affinity_block}{_event_ctx_block}
+{f'一人称: 「{_fp}」' if _fp else ''}{_soul_block}{_ep_block}{_url_ctx_block}{_nick_block}{_other_fp_block}{_affinity_block}{_event_ctx_block}
 
 【現在の時間帯】{_period}（{_now.strftime("%H:%M")}）{f' {_time_ctx}' if _time_ctx else ''}
 【状況】{' / '.join(_others)}と一緒にいて、自由に雑談しています。{_topic_instr}
@@ -822,6 +831,14 @@ with tab_auto:
                             "speaker_id": _tts_id,
                         })
                         _auto_save_log(_log)
+                        # URL検出 → バックグラウンドでfetch+要約キャッシュ
+                        for _url in _URL_RE.findall(_reply):
+                            if not get_url_summary(_url):
+                                threading.Thread(
+                                    target=fetch_and_cache_url,
+                                    args=(_url, b_url, mdl),
+                                    daemon=True,
+                                ).start()
                         # Phase 3: EventIntentClassifier + EventResolver (post-save)
                         try:
                             _recent_ctx = "\n".join(

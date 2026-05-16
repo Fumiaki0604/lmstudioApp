@@ -4,6 +4,7 @@ import re
 import subprocess
 import threading
 from pathlib import Path
+from typing import Optional
 
 import requests
 import trafilatura
@@ -13,6 +14,10 @@ import trafilatura
 # バックグラウンドタスク（soul更新・自律会話）は _priority_request が立っていたら即スキップする。
 _lmstudio_sem = threading.Semaphore(1)
 _priority_request = threading.Event()  # Setされている間はバックグラウンドがスキップ
+
+_url_cache: dict = {}
+_url_cache_lock = threading.Lock()
+_URL_RE = re.compile(r"https?://[^\s、。「」『』（）【】\)\]]{8,}")
 
 EMBEDDING_PREFIXES = ("text-embedding-", "embedding-", "nomic-embed-")
 DEFAULT_UA = (
@@ -213,6 +218,38 @@ def fetch_html(url: str, timeout: int = 20) -> str:
     r = requests.get(url, timeout=timeout, headers={"User-Agent": DEFAULT_UA})
     r.raise_for_status()
     return r.text
+
+
+def get_url_summary(url: str) -> Optional[str]:
+    with _url_cache_lock:
+        v = _url_cache.get(url)
+    return v if v else None
+
+
+def fetch_and_cache_url(url: str, base_url: str, model: str) -> None:
+    """バックグラウンドスレッドで呼ぶ。fetch→LLM要約→キャッシュ。"""
+    with _url_cache_lock:
+        if url in _url_cache:
+            return
+        _url_cache[url] = ""  # in-progress マーク
+    try:
+        html = fetch_html(url, timeout=15)
+        text = extract_main_text(html)
+        if not text:
+            with _url_cache_lock:
+                _url_cache.pop(url, None)
+            return
+        summary_prompt = build_summary_prompt(url, text, max_chars=3000)
+        result = call_lmstudio_chat_messages(
+            base_url, model,
+            [{"role": "user", "content": summary_prompt + "\n150字以内で要約してください。"}],
+            temperature=0.3, max_tokens=250, timeout=60, background=True,
+        )
+        with _url_cache_lock:
+            _url_cache[url] = result.strip()[:300]
+    except Exception:
+        with _url_cache_lock:
+            _url_cache.pop(url, None)
 
 
 def extract_main_text(html: str) -> str:
