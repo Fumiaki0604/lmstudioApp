@@ -55,7 +55,7 @@ from speakers import (
     update_speaker_icon, update_speaker_profile, get_speaker_data,
     parse_soul_affinities, affinity_behavior, sanitize_soul_for_prompt,
     extract_soul_interests, detect_topic_repetition,
-    load_episodes, format_episodes_for_prompt,
+    load_episodes, format_episodes_for_prompt, save_episode,
 )
 from conversation_controller import (
     CONTROL_RATE, DISTINCTIVE_FPS,
@@ -509,6 +509,9 @@ def _do_soul_updates(log_entries: list, all_chars: list, base_url: str, model: s
             soul_path.write_text(updated, encoding="utf-8")
         except Exception:
             pass
+        # soul更新とは別に、直近発言を具体的な出来事としてepisodesに保存
+        for turn in my_turns[-2:]:
+            save_episode(cname, turn["text"])
 
 
 with st.sidebar:
@@ -597,6 +600,9 @@ with tab_auto:
                     _hist = "\n".join([f"【{m['name']}】{m['text']}" for m in _recent]) if _recent else "（まだ会話が始まっていません）"
                     _soul = _load_soul(_cname)
                     _soul_block = f"\n\n【あなたの内面・記憶】\n{sanitize_soul_for_prompt(_soul)}" if _soul else ""
+                    _ep_list = load_episodes(_cname, limit=5)
+                    _ep_fmt = format_episodes_for_prompt(_ep_list)
+                    _ep_block = f"\n\n【直近の出来事（具体的な記憶）】\n{_ep_fmt}" if _ep_fmt else ""
                     # 話題転換: クールダウン中 or 直近ループ検出でsoul固有話題を注入
                     _cooldown = st.session_state.get("topic_change_cooldown", 0)
                     if mention_from:
@@ -677,7 +683,7 @@ with tab_auto:
                         )
                     _sys = f"""あなたは「{_cname}」です。以下の性格・口調で話してください。
 {_personality}
-{f'一人称: 「{_fp}」' if _fp else ''}{_soul_block}{_nick_block}{_other_fp_block}{_affinity_block}{_event_ctx_block}
+{f'一人称: 「{_fp}」' if _fp else ''}{_soul_block}{_ep_block}{_nick_block}{_other_fp_block}{_affinity_block}{_event_ctx_block}
 
 【現在の時間帯】{_period}（{_now.strftime("%H:%M")}）{f' {_time_ctx}' if _time_ctx else ''}
 【状況】{' / '.join(_others)}と一緒にいて、自由に雑談しています。{_topic_instr}
