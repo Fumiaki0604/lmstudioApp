@@ -197,11 +197,14 @@ def save_speakers(speakers: list) -> None:
 
 
 def save_speaker_icon(name: str, icon_data: bytes, ext: str = "png") -> Optional[str]:
+    import io
+    from PIL import Image
     safe_name = re.sub(r'[^\w]', '_', name)
-    icon_path = os.path.join(os.path.dirname(__file__), "icons", f"{safe_name}.{ext}")
+    icon_path = os.path.join(os.path.dirname(__file__), "icons", f"{safe_name}.png")
     try:
-        with open(icon_path, "wb") as f:
-            f.write(icon_data)
+        img = Image.open(io.BytesIO(icon_data)).convert("RGBA")
+        img.thumbnail((256, 256), Image.LANCZOS)
+        img.save(icon_path, "PNG", optimize=True)
         return icon_path
     except Exception:
         return None

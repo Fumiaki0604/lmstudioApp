@@ -894,7 +894,9 @@ with tab_auto:
                 _all_mention_tokens.extend(_dc_nicks.values())
             _mention_re = re.compile(r"@(" + "|".join(re.escape(t) for t in sorted(set(_all_mention_tokens), key=len, reverse=True)) + r")")
             for entry in auto_log[-30:]:
-                icon_path = entry.get("icon", "")
+                # アイコンは常に現在のspeaker_dataを優先（ログ埋め込みは変更追従しないため）
+                _entry_name = entry.get("name", "")
+                icon_path = (_disp_spk_data.get(_entry_name, {}).get("icon") or entry.get("icon", ""))
                 col_icon, col_msg = st.columns([1, 10])
                 with col_icon:
                     if icon_path and os.path.exists(icon_path):
