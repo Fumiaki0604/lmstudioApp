@@ -325,28 +325,6 @@ with st.sidebar:
 
     st.divider()
 
-    # ③ 音声読み上げ
-    st.header("🔊 音声読み上げ")
-    tts_enabled = st.checkbox("返答を読み上げる", value=False)
-
-    if tts_enabled:
-        tts_mode_options = {"cloud": "☁️ クラウド", "local": "💻 ローカル"}
-        current_tts_mode = get_tts_mode()
-        tts_mode = st.radio(
-            "TTSエンジン",
-            options=list(tts_mode_options.keys()),
-            format_func=lambda x: tts_mode_options[x],
-            index=0 if current_tts_mode == "cloud" else 1,
-            horizontal=True,
-            label_visibility="collapsed",
-        )
-        if tts_mode == "local":
-            if check_local_voicevox():
-                st.caption("✅ VOICEVOX接続中")
-            else:
-                st.caption("⚠️ VOICEVOX未起動")
-    else:
-        tts_mode = get_tts_mode()
 
     # st.divider()
     # # ③ 会話履歴（ファイル保存ベース - 現在未使用）
@@ -515,19 +493,6 @@ def _do_soul_updates(log_entries: list, all_chars: list, base_url: str, model: s
             save_episode(cname, turn["text"])
 
 
-with st.sidebar:
-    st.divider()
-    with st.expander("🐛 話題転換デバッグ", expanded=False):
-        _dbg_log = st.session_state.get("topic_debug_log", [])
-        _cd = st.session_state.get("topic_change_cooldown", 0)
-        st.caption(f"cooldown残り: {_cd}")
-        if _dbg_log:
-            for _line in _dbg_log:
-                st.caption(_line)
-        else:
-            st.caption("イベントなし")
-        if st.button("クリア", key="dbg_clear"):
-            st.session_state["topic_debug_log"] = []
 
 tab_auto, tab_note, tab_autogen, tab_settings = st.tabs(["🏠 自律会話", "📝 note記事", "🤖 AutoGen PoC", "⚙️ 設定"])
 
