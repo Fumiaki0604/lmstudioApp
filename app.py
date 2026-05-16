@@ -607,7 +607,8 @@ with tab_auto:
                         _move_instr = build_move_instruction(_selected_move, _conv_state)
                         if _move_instr:
                             _topic_instr += _move_instr
-                    _mention_hint = "特定の誰かに話しかけたいときは「@名前、〜」の形でメンションしてもいい（例: @ずんだもん、〜）。強制ではない。"
+                    _mention_example = "@" + (list(_char_nicknames.values())[0] if _char_nicknames else _others[0]) if _others else "@名前"
+                    _mention_hint = f"特定の誰かに話しかけたいときは「@呼び名、〜」の形でメンションしてもいい（例: {_mention_example}、〜）。強制ではない。"
                     _nick_lines = [f"  {n} → 「{_char_nicknames[n]}」" for n in _others if n in _char_nicknames]
                     _nick_block = "\n【他キャラへの呼び方（必ずこの呼び方を使う）】\n" + "\n".join(_nick_lines) if _nick_lines else ""
                     # 他キャラの一人称（代名詞と混同しないよう明示）
@@ -884,6 +885,14 @@ with tab_auto:
         # ログ表示（ファイルから読み込み）
         auto_log = _auto_load_log()
         if auto_log:
+            # ハイライト用: フルネーム + 全キャラのあだ名を収集
+            _disp_spk_data = get_speaker_data()
+            _all_mention_tokens: list = []
+            for _dc in auto_all_chars:
+                _all_mention_tokens.append(_dc["name"])
+                _dc_nicks = (_disp_spk_data.get(_dc["name"], {}).get("calls_profile") or {}).get("char_nicknames") or {}
+                _all_mention_tokens.extend(_dc_nicks.values())
+            _mention_re = re.compile(r"@(" + "|".join(re.escape(t) for t in sorted(set(_all_mention_tokens), key=len, reverse=True)) + r")")
             for entry in auto_log[-30:]:
                 icon_path = entry.get("icon", "")
                 col_icon, col_msg = st.columns([1, 10])
@@ -894,9 +903,8 @@ with tab_auto:
                         st.write("👤")
                 with col_msg:
                     st.markdown(f"**{entry['name']}** <span style='color:gray;font-size:0.8em'>{entry['time']}</span>", unsafe_allow_html=True)
-                    # @名前 をハイライト表示
-                    _disp_text = re.sub(
-                        r"@(" + "|".join(re.escape(n) for n in _all_names) + r")",
+                    # @名前/@あだ名 をハイライト表示
+                    _disp_text = _mention_re.sub(
                         r"<span style='color:#1d9bf0;font-weight:bold'>@\1</span>",
                         entry["text"],
                     )
