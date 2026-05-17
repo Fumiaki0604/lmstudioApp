@@ -64,6 +64,7 @@ from conversation_controller import (
     check_output, build_retry_instruction,
     sanitize_reply, get_char_fallback, _truncate_at_last_sentence,
 )
+from hermes_director import run_hermes_director, should_call_director, DirectorAdvice
 from event_memory import (
     TimeContext,
     load_candidates, save_candidates,
@@ -262,6 +263,10 @@ if "auto_log" not in st.session_state:
     st.session_state["auto_log"] = []
 if "auto_next_time" not in st.session_state:
     st.session_state["auto_next_time"] = 0.0
+if "auto_turn_count" not in st.session_state:
+    st.session_state["auto_turn_count"] = 0
+if "director_advice" not in st.session_state:
+    st.session_state["director_advice"] = None
 if "auto_tts_played_count" not in st.session_state:
     st.session_state["auto_tts_played_count"] = 0
 
@@ -599,10 +604,28 @@ with tab_auto:
                         _topic_instr = "\n会話が一段落したと感じたら新しい話題を振ってもいい。"
                     # ConversationController: conv_state は Phase 1/2 共通で計算
                     _conv_state = update_conv_state(_log) if not mention_from else None
+                    # Phase H1: Hermes Director（条件付き・バックグラウンドで取得済みのadviceを使用）
+                    _turn_count = st.session_state.get("auto_turn_count", 0)
+                    _director_adv = st.session_state.get("director_advice")
+                    if _conv_state and should_call_director(_turn_count, _conv_state):
+                        try:
+                            _new_adv = run_hermes_director(
+                                _conv_state, _log, _em_events, _now, timeout=40
+                            )
+                            if _new_adv:
+                                st.session_state["director_advice"] = _new_adv
+                                _director_adv = _new_adv
+                                _dbg = f"🎬 Director [{_new_adv.status}] {_new_adv.problem[:40]} conf={_new_adv.confidence}"
+                                st.session_state["topic_debug_log"] = (
+                                    [_dbg] + st.session_state.get("topic_debug_log", [])
+                                )[:20]
+                        except Exception:
+                            pass
+                    st.session_state["auto_turn_count"] = _turn_count + 1
                     _selected_move = ""
                     if _conv_state and random.random() < CONTROL_RATE:
                         _selected_move = MovePlanner().pick_move(
-                            _conv_state, char_name=_cname
+                            _conv_state, char_name=_cname, director_advice=_director_adv
                         )
                         _move_instr = build_move_instruction(_selected_move, _conv_state)
                         if _move_instr:

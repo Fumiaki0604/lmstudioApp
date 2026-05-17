@@ -292,7 +292,7 @@ def update_conv_state(log_entries: list) -> ConversationState:
 
 class MovePlanner:
     def pick_move(self, state: ConversationState, last_move_types: list = None,
-                  char_name: str = "") -> str:
+                  char_name: str = "", director_advice=None) -> str:
         last_moves = (last_move_types or [])[-3:]
 
         # ステージ別ベース pool
@@ -315,6 +315,14 @@ class MovePlanner:
         char_bias = CHAR_MOVE_BIAS.get(char_name, [])
         if char_bias:
             pool = char_bias + pool
+
+        # Director Advice による重み付け（上書きではなく誘導）
+        if director_advice and director_advice.confidence >= 0.6:
+            if director_advice.recommended_moves:
+                pool = pool + [m for m in director_advice.recommended_moves * 2 if m in MOVE_TYPES]
+            if director_advice.avoid_moves:
+                filtered = [m for m in pool if m not in director_advice.avoid_moves]
+                pool = filtered if filtered else pool
 
         # open_hook 優先（care_loop/close 中は除外）
         if state.open_hooks and state.care_loop_score < 0.6 and not state.should_close_topic:
