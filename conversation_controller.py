@@ -42,6 +42,7 @@ MOVE_TYPES = [
     "reflect_on_event",
     "mark_event_expired",
     "next_day_followup",
+    "resolve_future_plan",
 ]
 
 MOVE_INSTRUCTIONS = {
@@ -89,16 +90,22 @@ MOVE_INSTRUCTIONS = {
     "reflect_on_event": "過去に出た企画・計画について、実施後の感想や「結局どうなったか」を1文で話す。準備話には戻らない。既成事実として扱う。",
     "mark_event_expired": "数日前・数時間前の企画を「流れた話」として軽く閉じ、次の話題への橋渡しをする。過去形で扱い、今も準備中にしない。",
     "next_day_followup": "前回の企画の結果を受けて、次に何をするかへ進める。結果はポジティブでも中立でもよい。準備に戻らない。",
+    "resolve_future_plan": (
+        "これ以上「明日やろう」「準備する」「リストを作ろう」を積み上げない。"
+        "すでに決まったことを1文でまとめ、次の話題に移るか、今できる小さい行動で閉じる。"
+        "例：「じゃあ役割はこれで確定。続きは明日の失敗報告で」「決まったし、もう寝よ」"
+        "「明日から頑張ろう」で終わらせない。"
+    ),
 }
 
 # ─── キャラ別 move_type バイアス ──────────────────────────────────────────────
 CHAR_MOVE_BIAS: dict = {
     "東北ずん子":  ["invite_other", "assign_role", "care_but_move", "process_risk"],
     "東北きりたん": ["tease", "introduce_conflict", "short_reaction"],
-    "四国めたん":  ["summarize_and_close", "ask", "calm_reframe", "reflect_on_event"],
+    "四国めたん":  ["summarize_and_close", "ask", "calm_reframe", "reflect_on_event", "resolve_future_plan"],
     "中国うさぎ":  ["observe", "bridge", "soft_punchline", "imagine_risk"],
-    "Noah":       ["observe", "bridge", "soft_punchline", "reflect_on_event", "mark_event_expired"],
-    "Hermes":     ["reframe", "specific_question", "introduce_conflict"],
+    "Noah":       ["observe", "bridge", "soft_punchline", "reflect_on_event", "mark_event_expired", "resolve_future_plan"],
+    "Hermes":     ["reframe", "specific_question", "introduce_conflict", "resolve_future_plan"],
     "雨晴はう":   ["shift", "bring_new_detail", "invite_other"],
     "春日部つむぎ": ["bring_new_detail", "tease", "short_reaction", "process_risk"],
     "WhiteCUL":   ["reframe", "ask", "soft_punchline"],
@@ -109,6 +116,13 @@ CARE_LOOP_TERMS = [
     "休み", "休もう", "お休み", "無理", "疲れ",
     "気をつけ", "元気", "大事", "待ってる", "心配", "懸念",
     "頑張", "ゆっくり", "体調", "眠れ",
+]
+
+# ─── future_plan_loop 定数 ────────────────────────────────────────────────────
+FUTURE_PLAN_TERMS = [
+    "明日", "明日の朝", "明日から", "明日は", "明日昼",
+    "準備", "リスト", "行動計画", "予定", "段取り",
+    "次の買い出し", "材料調達", "買い出しリスト",
 ]
 
 # ─── OutputGuardrail 定数 ────────────────────────────────────────────────────
@@ -122,6 +136,8 @@ _CONCRETE_ACTION_RE = re.compile(
 )
 
 _WORD_RE = re.compile(r"[一-鿿]{2,}|[ぁ-ゟ]{3,}|[ァ-ヿ]{2,}|[a-zA-Z]{3,}")
+
+_FOREIGN_SCRIPT_RE = re.compile(r"[Ѐ-ӿ؀-ۿ֐-׿가-힣ᄀ-ᇿͰ-Ͽ]")
 
 _STOP = {
     "います", "ます", "です", "から", "けど", "ので", "して", "ある", "いる", "なる",
@@ -138,6 +154,16 @@ _AGREEMENT_MARKERS = [
 
 def _extract_content_words(text: str) -> set:
     return set(_WORD_RE.findall(text)) - _STOP
+
+
+def _kanji_ngrams(text: str, n: int = 5) -> set:
+    """漢字を含む n-gram を返す（クロスキャラクター語句コピー検出用）。"""
+    result = set()
+    for i in range(len(text) - n + 1):
+        span = text[i:i + n]
+        if re.search(r"[一-鿿]", span):
+            result.add(span)
+    return result
 
 
 def _jaccard(a: set, b: set) -> float:
@@ -173,6 +199,7 @@ class ConversationState:
     recent_full_texts: list = field(default_factory=list)  # 直近3件の全文（Jaccard用）
     consumed_topics: list = field(default_factory=list)   # 消化済み話題（TopicMemory）
     active_goal: str = ""                                  # 現在の会話目標（EventMemoryから注入）
+    future_plan_loop: bool = False                         # 「明日やろう/準備」が3回以上連続
 
 
 def update_conv_state(log_entries: list) -> ConversationState:
@@ -246,6 +273,11 @@ def update_conv_state(log_entries: list) -> ConversationState:
     care_loop_score = care_hits / max(len(recent), 1)
     should_close = topic_age >= 5 or care_loop_score >= 0.6
 
+    # --- future_plan_loop (直近5件で3件以上に未来予定ワード) ---
+    recent5 = log_entries[-5:] if log_entries else []
+    future_hits = sum(1 for e in recent5 if any(t in e.get("text", "") for t in FUTURE_PLAN_TERMS))
+    future_plan_loop = future_hits >= 3
+
     # --- 直近3件の全文（Jaccard用） ---
     recent_full_texts = [e["text"] for e in recent[-3:]]
 
@@ -287,6 +319,7 @@ def update_conv_state(log_entries: list) -> ConversationState:
         should_close_topic=should_close,
         recent_full_texts=recent_full_texts,
         consumed_topics=consumed_topics,
+        future_plan_loop=future_plan_loop,
     )
 
 
@@ -298,6 +331,8 @@ class MovePlanner:
         # ステージ別ベース pool
         if state.care_loop_score >= 0.6:
             pool = ["tease", "short_reaction", "introduce_conflict", "summarize_and_close", "bridge"]
+        elif state.future_plan_loop:
+            pool = ["resolve_future_plan", "summarize_and_close", "soft_punchline", "reflect_on_event", "bridge"]
         elif state.should_close_topic:
             pool = ["summarize_and_close", "bridge", "shift", "assign_role"]
         elif state.topic_stage == "closing":
@@ -361,6 +396,9 @@ def build_move_instruction(move: str, state: ConversationState) -> str:
 
     if state.active_goal:
         lines.append(f"- 現在の会話目標: 「{state.active_goal}」を進める。準備の話に戻らない。")
+
+    if state.future_plan_loop:
+        lines.append("- 「明日やろう」「準備しよう」「リストを作ろう」は使わない。すでに決まったこととして扱い、今の行動か小さな実行結果で閉じる。")
 
     return "\n".join(lines)
 
@@ -465,6 +503,17 @@ def check_output(reply: str, state: ConversationState,
         elif best_jaccard >= 0.35 and shared_count >= 3:
             ng_score += 0.5
             reasons.append(f"直前発話と内容が近すぎる（共有語: {'・'.join(shared_words[:4])}）")
+
+    # ── 8. クロスキャラクター語句コピー検出（漢字含む5-gram） ────────────────
+    if move_type != "short_reaction" and state.recent_full_texts and len(reply) >= 8:
+        reply_ngrams = _kanji_ngrams(reply)
+        for ref_text in state.recent_full_texts:
+            shared_ng = reply_ngrams & _kanji_ngrams(ref_text)
+            if len(shared_ng) >= 3:
+                sample = list(shared_ng)[:2]
+                ng_score += 0.4
+                reasons.append(f"直近発話の語句をそのまま転用（{'・'.join(sample)}）")
+                break
 
     is_ng = ng_score >= 0.6
     return is_ng, round(ng_score, 2), reasons, shared_words
@@ -576,7 +625,12 @@ def sanitize_reply(reply: str, speaker_name: str = "", own_fp: str = "",
         ng_score += 0.8
         reasons.append("文が途中で切れている")
 
-    # ── 4. 直前話者からの動的汚染検出────────────────────────────────────────
+    # ── 4. 非日本語スクリプト混入 ────────────────────────────────────────────
+    if _FOREIGN_SCRIPT_RE.search(reply):
+        ng_score += 0.7
+        reasons.append("非日本語スクリプト混入（キリル/アラビア/ハングル等）")
+
+    # ── 5. 直前話者からの動的汚染検出────────────────────────────────────────
     if prev_speaker_text and prev_speaker_fp and prev_speaker_fp != own_fp:
         if prev_speaker_fp in reply:
             ng_score += 0.7

@@ -70,7 +70,7 @@ from event_memory import (
     load_candidates, save_candidates,
     load_events, save_events,
     load_resolved, save_resolved,
-    resolve_events, update_event_candidates,
+    resolve_events, update_event_candidates, update_preparation_mentions,
     build_event_context_prompt, classify_event_intent,
 )
 
@@ -837,6 +837,7 @@ with tab_auto:
                             _em_candidates, _em_events = update_event_candidates(
                                 _clf, _reply, _cname, _now, _em_candidates, _em_events
                             )
+                            _em_events = update_preparation_mentions(_reply, _em_events)
                             _em_events, _em_resolved_new = resolve_events(
                                 _em_events, _em_resolved, _now, b_url, mdl
                             )

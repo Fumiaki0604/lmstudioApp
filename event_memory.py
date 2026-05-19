@@ -11,6 +11,11 @@ from chat import call_lmstudio_chat_messages
 
 _STORAGE_DIR = Path.home() / ".lmstudio_assistant" / "event_memory"
 
+_PREP_TERMS_EVENT = [
+    "準備", "買い出し", "材料", "リスト", "段取り", "役割分担", "行動計画",
+    "予定", "明日", "明日の朝", "明日から",
+]
+
 
 # ─── TimeContext ──────────────────────────────────────────────────────────────
 
@@ -80,13 +85,14 @@ class EventMemory:
     title: str
     event_type: str = "activity_proposal"
     aliases: list = field(default_factory=list)
-    status: str = "planned"  # planned / maybe_done / assumed_done / expired / abandoned
+    status: str = "planned"  # planned / maybe_done / assumed_done / expired / abandoned / needs_resolution
     first_seen_at: str = ""
     last_seen_at: str = ""
     participants: list = field(default_factory=list)
     evidence: list = field(default_factory=list)
     outcome_summary: Optional[str] = None
     next_hook: Optional[str] = None
+    preparation_mentions: int = 0  # 準備系発話の累積カウント（>=3でneeds_resolution）
 
 
 @dataclass
@@ -286,6 +292,42 @@ def update_event_candidates(classification: dict, reply: str, speaker: str,
 
 # ─── EventResolver ────────────────────────────────────────────────────────────
 
+def update_preparation_mentions(reply: str, events: list) -> list:
+    """準備系発言でplannedイベントの preparation_mentions をインクリメント。"""
+    if not any(t in reply for t in _PREP_TERMS_EVENT):
+        return events
+    for e in events:
+        if e.status == "planned":
+            e.preparation_mentions += 1
+            break
+    return events
+
+
+def _generate_decided_summary(event: EventMemory, base_url: str, model: str) -> str:
+    """準備ループ3回で「決定済みまとめ」を生成。"""
+    participants = ", ".join(event.participants) if event.participants else "不明"
+    prompt = (
+        f"以下のキャラクター会話イベントについて、「誰が何をするか決まった」という"
+        f"形の50字以内のまとめを生成してください。\n\n"
+        f"イベント: {event.title}\n"
+        f"参加者: {participants}\n"
+        f"内容: {event.evidence[-1] if event.evidence else ''}\n\n"
+        f"ルール:\n"
+        f"- 「決まった・まとまった」形で終わらせる\n"
+        f"- 例: 「めたんが野菜、つむぎが麺、きりたんが手元担当で決まった」\n"
+        f"- 50字以内のテキストのみ出力"
+    )
+    try:
+        result = call_lmstudio_chat_messages(
+            base_url, model,
+            [{"role": "user", "content": prompt}],
+            temperature=0.3, max_tokens=80, timeout=30, background=True,
+        )
+        return result.strip()[:100]
+    except Exception:
+        return f"{event.title}の役割分担がまとまった。"
+
+
 def _generate_outcome(event: EventMemory, base_url: str, model: str) -> str:
     """OutcomeGenerator: 日常的な小さな結果を生成する。temperature=0.4。"""
     prompt = f"""以下のキャラクター会話イベントについて、数時間後の自然な結末を50字以内で生成してください。
@@ -316,7 +358,7 @@ def resolve_events(events: list, resolved: list, now: datetime,
     new_resolved: list = list(resolved)
 
     for event in events:
-        if event.status not in ("planned", "maybe_done"):
+        if event.status not in ("planned", "maybe_done", "needs_resolution"):
             updated.append(event)
             continue
         try:
@@ -343,6 +385,12 @@ def resolve_events(events: list, resolved: list, now: datetime,
         elif elapsed_h >= 2:
             event.status = "maybe_done"
             updated.append(event)
+        elif event.status == "planned" and event.preparation_mentions >= 3:
+            # 準備ループ3回 → 決定済みとして閉じる
+            event.status = "needs_resolution"
+            if not event.outcome_summary:
+                event.outcome_summary = _generate_decided_summary(event, base_url, model)
+            updated.append(event)
         else:
             updated.append(event)
 
@@ -363,7 +411,7 @@ def build_event_context_prompt(events: list, resolved: list,
             summary = r.outcome_summary or ("流れた企画" if r.status == "expired" else "実施済み")
             lines.append(f"  ・「{r.title}」: {summary}")
 
-    active = [e for e in events if e.status in ("planned", "maybe_done", "assumed_done")]
+    active = [e for e in events if e.status in ("planned", "maybe_done", "assumed_done", "needs_resolution")]
     if active:
         lines.append("現在話し合っている話題:")
         for e in active[:3]:
@@ -371,6 +419,9 @@ def build_event_context_prompt(events: list, resolved: list,
                 lines.append(f"  ・「{e.title}」: おそらく実施済み。感想や次の展開に移ってよい。")
             elif e.status == "maybe_done":
                 lines.append(f"  ・「{e.title}」: 実施した可能性あり。結果や感想に移ってよい。")
+            elif e.status == "needs_resolution":
+                summary = e.outcome_summary or "役割がまとまった"
+                lines.append(f"  ・「{e.title}」: {summary}。これ以上準備の繰り返し不要。次の実行や結果に移ってよい。")
             else:
                 lines.append(f"  ・「{e.title}」: 話し合い中。準備話の繰り返しは避ける。")
 
