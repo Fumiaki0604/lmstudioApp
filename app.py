@@ -71,6 +71,7 @@ from event_memory import (
     load_events, save_events,
     load_resolved, save_resolved,
     resolve_events, update_event_candidates, update_preparation_mentions,
+    apply_director_event_action,
     build_event_context_prompt, classify_event_intent,
 )
 
@@ -619,6 +620,12 @@ with tab_auto:
                                 st.session_state["topic_debug_log"] = (
                                     [_dbg] + st.session_state.get("topic_debug_log", [])
                                 )[:20]
+                                # H2: event_action を EventMemory に即時反映
+                                _em_events, _ev_modified = apply_director_event_action(
+                                    _new_adv, _em_events, _now
+                                )
+                                if _ev_modified:
+                                    save_events(_em_events)
                         except Exception:
                             pass
                     st.session_state["auto_turn_count"] = _turn_count + 1

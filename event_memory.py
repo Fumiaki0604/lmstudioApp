@@ -397,6 +397,60 @@ def resolve_events(events: list, resolved: list, now: datetime,
     return updated, new_resolved
 
 
+# ─── H2: Director → EventMemory 連携 ─────────────────────────────────────────
+
+def apply_director_event_action(director_advice, events: list, now: datetime) -> tuple:
+    """DirectorAdvice の event_action を EventMemory に反映する。
+    returns (events, modified: bool)
+    confidence < 0.6 または action == 'none' のときは何もしない。
+    """
+    if not director_advice or director_advice.confidence < 0.6:
+        return events, False
+
+    ea = director_advice.event_action or {}
+    action = ea.get("action", "none")
+    if action == "none" or not action:
+        return events, False
+
+    target_title = ea.get("target_event") or ""
+    suggested_outcome = ea.get("suggested_outcome") or ""
+
+    # target_event が指定されていない場合は最初の planned イベントに適用
+    target = None
+    if target_title:
+        target = next(
+            (e for e in events if _similar_title(e.title, target_title)
+             and e.status in ("planned", "maybe_done", "needs_resolution")),
+            None,
+        )
+    if target is None:
+        target = next(
+            (e for e in events if e.status in ("planned", "maybe_done", "needs_resolution")),
+            None,
+        )
+    if target is None:
+        return events, False
+
+    now_str = now.isoformat()
+    if action == "assume_small_outcome":
+        target.status = "assumed_done"
+        target.outcome_summary = suggested_outcome or f"{target.title}は小さく一区切りついた。"
+        target.last_seen_at = now_str
+    elif action == "mark_expired":
+        target.status = "expired"
+        target.outcome_summary = suggested_outcome or "数日前の話題として扱う。"
+        target.last_seen_at = now_str
+    elif action == "close_topic":
+        target.status = "needs_resolution"
+        if suggested_outcome and not target.outcome_summary:
+            target.outcome_summary = suggested_outcome
+        target.last_seen_at = now_str
+    else:
+        return events, False
+
+    return events, True
+
+
 # ─── Prompt builder ───────────────────────────────────────────────────────────
 
 def build_event_context_prompt(events: list, resolved: list,
