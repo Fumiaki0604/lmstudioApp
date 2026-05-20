@@ -268,8 +268,8 @@ if "auto_turn_count" not in st.session_state:
     st.session_state["auto_turn_count"] = 0
 if "director_advice" not in st.session_state:
     st.session_state["director_advice"] = None
-if "auto_tts_played_count" not in st.session_state:
-    st.session_state["auto_tts_played_count"] = 0
+if "auto_tts_last_ts" not in st.session_state:
+    st.session_state["auto_tts_last_ts"] = ""
 
 max_chars = st.session_state["max_chars"]
 max_tokens = st.session_state["max_tokens"]
@@ -537,12 +537,13 @@ with tab_auto:
             if st.button("🗑 ログクリア"):
                 st.session_state["auto_log"] = []
                 _auto_save_log([])
-                st.session_state["auto_tts_played_count"] = 0
+                st.session_state["auto_tts_last_ts"] = ""
 
         auto_tts_enabled = st.checkbox("🔊 読み上げ", value=False, key="auto_tts_enabled")
-        # チェックをONにした瞬間に過去ログをスキップ（その時点のログ件数を再生済みとして記録）
+        # チェックをONにした瞬間に過去ログをスキップ（その時点の最新タイムスタンプを記録）
         if auto_tts_enabled and not st.session_state.get("auto_tts_prev_enabled", False):
-            st.session_state["auto_tts_played_count"] = len(_auto_load_log())
+            _cur_log = _auto_load_log()
+            st.session_state["auto_tts_last_ts"] = _cur_log[-1].get("timestamp", "") if _cur_log else ""
         st.session_state["auto_tts_prev_enabled"] = auto_tts_enabled
 
         st.caption(f"参加キャラ: {len(auto_all_chars)}人 / next={int(st.session_state['auto_next_time'] - time.time())}秒後 / 生成中={_auto_state['generating']}")
@@ -964,13 +965,15 @@ with tab_auto:
         # TTS: 新着エントリを読み上げ
         # st.audio()はリレンダーでDOMが消えて止まるため、window.parent._autoTtsAudioに保持してリレンダー耐性を持たせる
         if auto_tts_enabled and auto_log:
-            _auto_played = st.session_state.get("auto_tts_played_count", 0)
-            if len(auto_log) > _auto_played:
-                _tts_entry = auto_log[_auto_played]
+            _last_ts = st.session_state.get("auto_tts_last_ts", "")
+            # タイムスタンプが_last_tsより新しい最初のエントリを再生
+            _tts_entry = next(
+                (e for e in auto_log if e.get("timestamp", "") > _last_ts), None
+            )
+            if _tts_entry:
                 _tts_text = strip_urls_for_tts(_tts_entry.get("text", ""))
                 _tts_spk = _tts_entry.get("speaker_id", 3)
                 _tts_mode = get_tts_mode()
-                _auto_tts_ok = False
                 try:
                     if _tts_mode == "local" or _tts_spk >= 800_000_000:
                         _audio_data, _tts_err = synthesize_voice_local_full(_tts_text, _tts_spk)
@@ -979,13 +982,13 @@ with tab_auto:
                     if _audio_data:
                         import base64 as _b64
                         _a64 = _b64.b64encode(_audio_data).decode()
-                        _play_idx = _auto_played
+                        _play_ts = _tts_entry.get("timestamp", "")
                         st.components.v1.html(f"""<script>
 (function(){{
   try {{
     var p = window.parent;
-    if (p._autoTtsLastIdx === {_play_idx}) return;
-    p._autoTtsLastIdx = {_play_idx};
+    if (p._autoTtsLastTs === '{_play_ts}') return;
+    p._autoTtsLastTs = '{_play_ts}';
     if (!p._autoTtsAudio) p._autoTtsAudio = new p.Audio();
     p._autoTtsAudio.src = 'data:audio/wav;base64,{_a64}';
     p._autoTtsAudio.play();
@@ -995,10 +998,9 @@ with tab_auto:
   }}
 }})();
 </script>""", height=0)
-                        _auto_tts_ok = True
                 except Exception:
                     pass
-                st.session_state["auto_tts_played_count"] = _auto_played + 1
+                st.session_state["auto_tts_last_ts"] = _tts_entry.get("timestamp", "")
 
         if st.session_state["auto_running"]:
             remaining = max(0, int(st.session_state["auto_next_time"] - time.time()))
