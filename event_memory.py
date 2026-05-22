@@ -85,7 +85,7 @@ class EventMemory:
     title: str
     event_type: str = "activity_proposal"
     aliases: list = field(default_factory=list)
-    status: str = "planned"  # planned / maybe_done / assumed_done / expired / abandoned / needs_resolution
+    status: str = "planned"  # planned / maybe_done / assumed_done / expired / abandoned / needs_resolution / decided
     first_seen_at: str = ""
     last_seen_at: str = ""
     participants: list = field(default_factory=list)
@@ -93,6 +93,9 @@ class EventMemory:
     outcome_summary: Optional[str] = None
     next_hook: Optional[str] = None
     preparation_mentions: int = 0  # 準備系発話の累積カウント（>=3でneeds_resolution）
+    decided_at: str = ""
+    closed_until: str = ""         # この時刻まで準備相談の再開を禁止
+    decisions_summary: str = ""    # 決定内容の自然文サマリ
 
 
 @dataclass
@@ -303,6 +306,44 @@ def update_preparation_mentions(reply: str, events: list) -> list:
     return events
 
 
+def _next_6am(now: datetime) -> datetime:
+    """翌朝6時（今が6時前なら今日の6時）を返す。"""
+    candidate = now.replace(hour=6, minute=0, second=0, microsecond=0)
+    if now.hour < 6:
+        return candidate
+    return candidate + timedelta(days=1)
+
+
+def mark_decided(event: "EventMemory", now: datetime, decisions_summary: str = "") -> "EventMemory":
+    """イベントを decided に遷移し closed_until を翌朝6時に設定する。"""
+    event.status = "decided"
+    event.decided_at = now.isoformat()
+    event.closed_until = _next_6am(now).isoformat()
+    if decisions_summary:
+        event.decisions_summary = decisions_summary
+    return event
+
+
+def get_decided_event_hint(events: list, now: datetime) -> str:
+    """decided かつ closed_until が未来のイベントがあれば禁止指示テキストを返す。"""
+    now_str = now.isoformat()
+    for e in events:
+        if e.status != "decided" or not e.closed_until:
+            continue
+        try:
+            if now >= datetime.fromisoformat(e.closed_until):
+                continue
+        except (ValueError, TypeError):
+            continue
+        dec = f"　決定内容: {e.decisions_summary}" if e.decisions_summary else ""
+        return (
+            f"「{e.title}」はすでに今夜の相談を終えています。{dec}"
+            f"　買い出し・保管・役割分担を再開しないこと。"
+            f"触れるなら「明日どうだったか」か「今日は寝る」方向で。"
+        )
+    return ""
+
+
 def _generate_decided_summary(event: EventMemory, base_url: str, model: str) -> str:
     """準備ループ3回で「決定済みまとめ」を生成。"""
     participants = ", ".join(event.participants) if event.participants else "不明"
@@ -445,6 +486,13 @@ def apply_director_event_action(director_advice, events: list, now: datetime) ->
         if suggested_outcome and not target.outcome_summary:
             target.outcome_summary = suggested_outcome
         target.last_seen_at = now_str
+    elif action == "mark_decided":
+        # confidence >= 0.7 かつ preparation_mentions >= 2 のときだけ decided に遷移
+        if director_advice.confidence >= 0.7 and target.preparation_mentions >= 2:
+            mark_decided(target, now, decisions_summary=suggested_outcome)
+            target.last_seen_at = now_str
+        else:
+            return events, False
     else:
         return events, False
 
@@ -464,6 +512,18 @@ def build_event_context_prompt(events: list, resolved: list,
         for r in expired_or_done:
             summary = r.outcome_summary or ("流れた企画" if r.status == "expired" else "実施済み")
             lines.append(f"  ・「{r.title}」: {summary}")
+
+    # decided は別枠で強調表示
+    decided = [e for e in events if e.status == "decided" and e.closed_until]
+    if decided:
+        lines.append("決定済み（今夜の相談は終了）:")
+        for e in decided[:2]:
+            dec = f"　{e.decisions_summary}" if e.decisions_summary else ""
+            lines.append(
+                f"  ・「{e.title}」: 今夜の相談は決定済み。{dec}"
+                f"　買い出し・保管・役割分担を再開しないこと。"
+                f"触れるなら「明日どうだったか」か「今日は寝る」方向で。"
+            )
 
     active = [e for e in events if e.status in ("planned", "maybe_done", "assumed_done", "needs_resolution")]
     if active:

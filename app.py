@@ -73,6 +73,7 @@ from event_memory import (
     resolve_events, update_event_candidates, update_preparation_mentions,
     apply_director_event_action,
     build_event_context_prompt, classify_event_intent,
+    get_decided_event_hint, mark_decided,
 )
 
 # 自律会話スレッド状態は speakers._auto_state (rerun-safe mutable dict) を使用
@@ -606,6 +607,8 @@ with tab_auto:
                         _topic_instr = "\n会話が一段落したと感じたら新しい話題を振ってもいい。"
                     # ConversationController: conv_state は Phase 1/2 共通で計算
                     _conv_state = update_conv_state(_log) if not mention_from else None
+                    if _conv_state and _em_events:
+                        _conv_state.decided_event_hint = get_decided_event_hint(_em_events, _now)
                     # Phase H1: Hermes Director（条件付き・バックグラウンドで取得済みのadviceを使用）
                     _turn_count = st.session_state.get("auto_turn_count", 0)
                     _director_adv = st.session_state.get("director_advice")
@@ -731,11 +734,19 @@ with tab_auto:
                     _reply = normalize_model_output(_reply)
                     # Phase 2/2.5/2.6: OutputGuardrail — NG なら1回だけ再生成
                     if _reply and _conv_state:
+                        _decided_evs = [
+                            e for e in _em_events
+                            if e.status == "decided" and e.closed_until
+                        ] if _em_events else []
                         _is_ng, _ng_score, _ng_reasons, _shared_words = check_output(
                             _reply, _conv_state,
                             own_fp=_fp,
                             other_fps=_other_fps_dict,
                             move_type=_selected_move,
+                            speaker_name=_cname,
+                            now=_now,
+                            decided_events=_decided_evs,
+                            director_status=(_director_adv.status if _director_adv else ""),
                         )
                         if _is_ng:
                             _dbg = f"🛡 Guardrail [{_cname}] score={_ng_score} {_ng_reasons}"

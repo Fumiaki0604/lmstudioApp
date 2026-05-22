@@ -29,13 +29,13 @@ active_goal: {active_goal}
 
 出力JSON（このフォーマットのみ）:
 {{
-  "status": "normal | topic_loop | preparation_loop | stale_event | persona_drift | future_plan_loop | event_scope_creep | style_contamination | truncated_output",
+  "status": "normal | topic_loop | preparation_loop | stale_event | persona_drift | future_plan_loop | reopen_closed_event | sleep_closure_needed | event_scope_creep | style_contamination | truncated_output",
   "problem": "短い診断（日本語）",
   "recommended_moves": [],
   "avoid_moves": [],
   "event_action": {{
     "target_event": null,
-    "action": "none | assume_small_outcome | mark_expired | close_topic",
+    "action": "none | assume_small_outcome | mark_expired | close_topic | mark_decided",
     "suggested_outcome": null
   }},
   "speaker_suggestions": [],

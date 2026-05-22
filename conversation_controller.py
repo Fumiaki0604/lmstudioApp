@@ -2,6 +2,7 @@
 import random
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 
 CONTROL_RATE = 0.75
 
@@ -13,7 +14,7 @@ HOOK_PATTERNS = [
 
 # ─── 一人称分類 ───────────────────────────────────────────────────────────────
 # 強くチェックする独自一人称（被りが少なく、汚染が致命的なもの）
-DISTINCTIVE_FPS = {"ボク", "僕", "俺", "ワタクシ", "わし", "小生", "うち", "あっし"}
+DISTINCTIVE_FPS = {"ボク", "僕", "俺", "ワタクシ", "わし", "小生", "うち", "あっし", "あーし", "あ～し"}
 # 共通になりやすい一人称（Guardrail で弱くチェック）
 COMMON_FPS = {"私", "わたし", "ワタシ", "あたし", "自分"}
 
@@ -43,6 +44,7 @@ MOVE_TYPES = [
     "mark_event_expired",
     "next_day_followup",
     "resolve_future_plan",
+    "close_for_sleep",
 ]
 
 MOVE_INSTRUCTIONS = {
@@ -96,15 +98,21 @@ MOVE_INSTRUCTIONS = {
         "例：「じゃあ役割はこれで確定。続きは明日の失敗報告で」「決まったし、もう寝よ」"
         "「明日から頑張ろう」で終わらせない。"
     ),
+    "close_for_sleep": (
+        "眠気・就寝の流れを受けて会話を閉じる。"
+        "決まったことだけを1文で確認し、「おやすみ」「続きは明日」で締める。"
+        "材料・保管・役割分担を増やさない。"
+        "1〜2文以内にする。"
+    ),
 }
 
 # ─── キャラ別 move_type バイアス ──────────────────────────────────────────────
 CHAR_MOVE_BIAS: dict = {
     "東北ずん子":  ["invite_other", "assign_role", "care_but_move", "process_risk"],
-    "東北きりたん": ["tease", "introduce_conflict", "short_reaction"],
-    "四国めたん":  ["summarize_and_close", "ask", "calm_reframe", "reflect_on_event", "resolve_future_plan"],
+    "東北きりたん": ["tease", "introduce_conflict", "short_reaction", "close_for_sleep"],
+    "四国めたん":  ["summarize_and_close", "ask", "calm_reframe", "reflect_on_event", "resolve_future_plan", "close_for_sleep"],
     "中国うさぎ":  ["observe", "bridge", "soft_punchline", "imagine_risk"],
-    "Noah":       ["observe", "bridge", "soft_punchline", "reflect_on_event", "mark_event_expired", "resolve_future_plan"],
+    "Noah":       ["observe", "bridge", "soft_punchline", "reflect_on_event", "mark_event_expired", "resolve_future_plan", "close_for_sleep"],
     "Hermes":     ["reframe", "specific_question", "introduce_conflict", "resolve_future_plan"],
     "雨晴はう":   ["shift", "bring_new_detail", "invite_other"],
     "春日部つむぎ": ["bring_new_detail", "tease", "short_reaction", "process_risk"],
@@ -124,6 +132,16 @@ FUTURE_PLAN_TERMS = [
     "準備", "リスト", "行動計画", "予定", "段取り",
     "次の買い出し", "材料調達", "買い出しリスト",
 ]
+
+SLEEP_TERMS = [
+    "寝る", "眠い", "お先に", "おやすみ", "早く寝る", "寝不足", "寝よう", "眠くなった", "眠れる", "お先",
+]
+
+BROKEN_PATTERNS = ["】【", "【。", "】。", "。。。", "、、", "][", "】】", "【【"]
+
+_REOPEN_QUESTION_RE = re.compile(
+    r"誰が|どうする|決めよう|考えよう|どうしよ|相談しよ|確認しよ|どうかな[？?]|どうすれば|誰に"
+)
 
 # ─── OutputGuardrail 定数 ────────────────────────────────────────────────────
 WEAK_ENDINGS = [
@@ -200,6 +218,9 @@ class ConversationState:
     consumed_topics: list = field(default_factory=list)   # 消化済み話題（TopicMemory）
     active_goal: str = ""                                  # 現在の会話目標（EventMemoryから注入）
     future_plan_loop: bool = False                         # 「明日やろう/準備」が3回以上連続
+    sleep_intent_count: int = 0                           # 直近5件での眠い/寝る系ワード数
+    speaker_recent_texts: dict = field(default_factory=dict)  # {name: [text, ...]} 同キャラ重複検出用
+    decided_event_hint: str = ""                           # app.pyから注入: decided event の禁止指示
 
 
 def update_conv_state(log_entries: list) -> ConversationState:
@@ -278,6 +299,19 @@ def update_conv_state(log_entries: list) -> ConversationState:
     future_hits = sum(1 for e in recent5 if any(t in e.get("text", "") for t in FUTURE_PLAN_TERMS))
     future_plan_loop = future_hits >= 3
 
+    # --- sleep_intent_count (直近5件で眠い/寝る系ワード) ---
+    sleep_hits = sum(1 for e in recent5 if any(t in e.get("text", "") for t in SLEEP_TERMS))
+    sleep_intent_count = sleep_hits
+
+    # --- per-speaker直近発言（同キャラ重複防止用、直近15件から再構築） ---
+    speaker_recent_texts: dict = {}
+    for _e in (log_entries[-15:] if log_entries else []):
+        _n = _e.get("name", "")
+        if _n:
+            _bucket = speaker_recent_texts.setdefault(_n, [])
+            _bucket.append(_e.get("text", ""))
+            speaker_recent_texts[_n] = _bucket[-3:]
+
     # --- 直近3件の全文（Jaccard用） ---
     recent_full_texts = [e["text"] for e in recent[-3:]]
 
@@ -320,6 +354,8 @@ def update_conv_state(log_entries: list) -> ConversationState:
         recent_full_texts=recent_full_texts,
         consumed_topics=consumed_topics,
         future_plan_loop=future_plan_loop,
+        sleep_intent_count=sleep_intent_count,
+        speaker_recent_texts=speaker_recent_texts,
     )
 
 
@@ -331,6 +367,10 @@ class MovePlanner:
         # ステージ別ベース pool
         if state.care_loop_score >= 0.6:
             pool = ["tease", "short_reaction", "introduce_conflict", "summarize_and_close", "bridge"]
+        elif state.sleep_intent_count >= 2 and state.future_plan_loop:
+            pool = ["close_for_sleep", "summarize_and_close", "soft_punchline"]
+        elif state.sleep_intent_count >= 3:
+            pool = ["close_for_sleep", "soft_punchline", "short_reaction"]
         elif state.future_plan_loop:
             pool = ["resolve_future_plan", "summarize_and_close", "soft_punchline", "reflect_on_event", "bridge"]
         elif state.should_close_topic:
@@ -400,14 +440,33 @@ def build_move_instruction(move: str, state: ConversationState) -> str:
     if state.future_plan_loop:
         lines.append("- 「明日やろう」「準備しよう」「リストを作ろう」は使わない。すでに決まったこととして扱い、今の行動か小さな実行結果で閉じる。")
 
+    if state.sleep_intent_count >= 2:
+        lines.append("- 「眠い」「寝る」流れが続いています。準備の話を増やさず、決まったことだけ確認して会話を閉じてください。")
+
+    if state.decided_event_hint:
+        lines.append(f"- {state.decided_event_hint}")
+
     return "\n".join(lines)
+
+
+def _related_to_event(reply: str, event) -> float:
+    """reply とイベントタイトル/aliases の Jaccard 類似度を返す（reopen_guard 用）。"""
+    title = getattr(event, "title", "") or ""
+    aliases = getattr(event, "aliases", []) or []
+    event_words = set(re.findall(r"[一-鿿ぁ-ゟ]{2,}", title + " " + " ".join(aliases)))
+    reply_words = set(re.findall(r"[一-鿿ぁ-ゟ]{2,}", reply))
+    if not event_words or not reply_words:
+        return 0.0
+    return len(event_words & reply_words) / len(event_words | reply_words)
 
 
 # ─── Phase 2 / 2.5 / 2.6: OutputGuardrail ───────────────────────────────────
 
 def check_output(reply: str, state: ConversationState,
                  own_fp: str = "", other_fps: dict = None,
-                 move_type: str = "") -> tuple:
+                 move_type: str = "", speaker_name: str = "",
+                 now: datetime = None, decided_events: list = None,
+                 director_status: str = "") -> tuple:
     """(is_ng, ng_score, reasons, shared_words) を返す。"""
     ng_score = 0.0
     reasons = []
@@ -514,6 +573,39 @@ def check_output(reply: str, state: ConversationState,
                 ng_score += 0.4
                 reasons.append(f"直近発話の語句をそのまま転用（{'・'.join(sample)}）")
                 break
+
+    # ── 8b. per-speaker重複チェック（同キャラ直近3件） ────────────────────────
+    if speaker_name and move_type != "short_reaction" and len(reply) >= 8:
+        _spk_texts = state.speaker_recent_texts.get(speaker_name, [])
+        if _spk_texts:
+            _reply_ng = _kanji_ngrams(reply)
+            for _ref in _spk_texts:
+                _shared = _reply_ng & _kanji_ngrams(_ref)
+                if len(_shared) >= 3:
+                    _sample = list(_shared)[:2]
+                    ng_score += 0.5
+                    reasons.append(f"同キャラ直近発言と語句重複（{'・'.join(_sample)}）")
+                    break
+
+    # ── 9. 決定済みイベント再オープンガード ──────────────────────────────────
+    if decided_events:
+        _ck_now = now if now is not None else datetime.now()
+        for _ev in decided_events:
+            _cu = getattr(_ev, "closed_until", None)
+            if not _cu:
+                continue
+            try:
+                if _ck_now >= datetime.fromisoformat(_cu):
+                    continue
+            except (ValueError, TypeError):
+                continue
+            if _related_to_event(reply, _ev) >= 0.2 and _REOPEN_QUESTION_RE.search(reply):
+                ng_score += 0.7
+                reasons.append(f"決定済み「{_ev.title}」の準備相談を再開している")
+                break
+    elif director_status == "reopen_closed_event":
+        ng_score += 0.5
+        reasons.append("Director診断: 決定済みイベントの再相談")
 
     is_ng = ng_score >= 0.6
     return is_ng, round(ng_score, 2), reasons, shared_words
@@ -629,6 +721,13 @@ def sanitize_reply(reply: str, speaker_name: str = "", own_fp: str = "",
     if _FOREIGN_SCRIPT_RE.search(reply):
         ng_score += 0.7
         reasons.append("非日本語スクリプト混入（キリル/アラビア/ハングル等）")
+
+    # ── 4b. 破損記号パターン ─────────────────────────────────────────────────
+    for _pat in BROKEN_PATTERNS:
+        if _pat in reply:
+            ng_score += 0.6
+            reasons.append(f"出力破損記号「{_pat}」混入")
+            break
 
     # ── 5. 直前話者からの動的汚染検出────────────────────────────────────────
     if prev_speaker_text and prev_speaker_fp and prev_speaker_fp != own_fp:
