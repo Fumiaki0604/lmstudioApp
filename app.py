@@ -607,8 +607,6 @@ with tab_auto:
                         _topic_instr = "\n会話が一段落したと感じたら新しい話題を振ってもいい。"
                     # ConversationController: conv_state は Phase 1/2 共通で計算
                     _conv_state = update_conv_state(_log) if not mention_from else None
-                    if _conv_state and _em_events:
-                        _conv_state.decided_event_hint = get_decided_event_hint(_em_events, _now)
                     # Phase H1: Hermes Director（条件付き・バックグラウンドで取得済みのadviceを使用）
                     _turn_count = st.session_state.get("auto_turn_count", 0)
                     _director_adv = st.session_state.get("director_advice")
@@ -657,6 +655,8 @@ with tab_auto:
                             _other_fps_dict[oc["name"]] = oc_fp
                     _other_fp_block = "\n【他キャラの一人称（固有名詞と混同しないこと）】\n" + "\n".join(_other_fp_lines) if _other_fp_lines else ""
                     _now = datetime.now(ZoneInfo("Asia/Tokyo"))
+                    if _conv_state and _em_events:
+                        _conv_state.decided_event_hint = get_decided_event_hint(_em_events, _now)
                     _hour = _now.hour
                     _period = get_time_period(_hour)
                     _time_ctx = {
