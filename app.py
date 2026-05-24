@@ -1000,9 +1000,18 @@ with tab_auto:
     var p = window.parent;
     if (p._autoTtsLastTs === '{_play_ts}') return;
     p._autoTtsLastTs = '{_play_ts}';
-    if (!p._autoTtsAudio) p._autoTtsAudio = new p.Audio();
-    p._autoTtsAudio.src = 'data:audio/wav;base64,{_a64}';
-    p._autoTtsAudio.play();
+    if (!p._autoTtsQueue) p._autoTtsQueue = [];
+    p._autoTtsQueue.push('data:audio/wav;base64,{_a64}');
+    function _playNext() {{
+      if (!p._autoTtsQueue || p._autoTtsQueue.length === 0) return;
+      if (p._autoTtsAudio && !p._autoTtsAudio.paused && !p._autoTtsAudio.ended) return;
+      if (!p._autoTtsAudio) p._autoTtsAudio = new p.Audio();
+      var src = p._autoTtsQueue.shift();
+      p._autoTtsAudio.onended = _playNext;
+      p._autoTtsAudio.src = src;
+      p._autoTtsAudio.play().catch(function(){{}});
+    }}
+    _playNext();
   }} catch(e) {{
     var a = new Audio('data:audio/wav;base64,{_a64}');
     a.play();
