@@ -1033,16 +1033,20 @@ with tab_auto:
                     threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
                     threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
 
-        # TTS: バックグラウンドで事前合成済みのwavファイルをキューに注入
-        # 合成はメッセージ生成直後のスレッドで実行済みなのでレンダーはファイル読み込みのみ
+        # TTS: 表示を進めたエントリ1件のWAVだけ注入（他はディスクに残す）
+        # 次のrenderで次のWAVが注入されることで自然に1件ずつ同期する
         if auto_tts_enabled:
             import base64 as _b64
-            _wav_files = sorted(TTS_QUEUE_DIR.glob("*.wav"))
-            for _wav_path in _wav_files:
+            _inject_ts = _auto_state.get("tts_last_shown_ts", "")
+            _inject_ts_safe = _inject_ts.replace(":", "-").replace("+", "p").replace(".", "_") if _inject_ts else ""
+            _inject_wav = TTS_QUEUE_DIR / f"{_inject_ts_safe}.wav" if _inject_ts_safe else None
+            _wav_pending = len(list(TTS_QUEUE_DIR.glob("*.wav")))
+            st.caption(f"🔊 表示中: {_inject_ts[11:19] if _inject_ts else '—'} / WAV待機: {_wav_pending}件")
+            if _inject_wav and _inject_wav.exists():
                 try:
-                    _audio_data = _wav_path.read_bytes()
+                    _audio_data = _inject_wav.read_bytes()
                     _a64 = _b64.b64encode(_audio_data).decode()
-                    _play_ts = _wav_path.stem
+                    _play_ts = _inject_ts_safe
                     st.components.v1.html(f"""<script>
 (function(){{
   try {{
@@ -1074,7 +1078,7 @@ with tab_auto:
   }}
 }})();
 </script>""", height=0)
-                    _wav_path.unlink()
+                    _inject_wav.unlink()
                 except Exception:
                     pass
 
