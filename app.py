@@ -528,6 +528,15 @@ def _do_soul_updates(log_entries: list, all_chars: list, base_url: str, model: s
 tab_auto, tab_note, tab_autogen, tab_settings = st.tabs(["🏠 自律会話", "📝 note記事", "🤖 AutoGen PoC", "⚙️ 設定"])
 
 with tab_auto:
+    # TTS再生中ts_safeをJSから取得（renderごと1回、コンポーネントの余白をCSSで除去）
+    st.markdown("""<style>
+[data-testid="stCustomComponentV1"]{margin:0!important;padding:0!important;min-height:0!important;line-height:0!important;}
+</style>""", unsafe_allow_html=True)
+    _tts_now_playing_raw = streamlit_js_eval(
+        js_expressions="window.parent._autoTtsNowPlaying || ''",
+        key=f"tnp_{int(time.time()) // 5}",
+    ) or ""
+
     st.subheader("🏠 自律会話")
     st.caption("キャラクター同士がユーザー介在なしで会話します。")
 
@@ -988,17 +997,11 @@ with tab_auto:
                 _all_mention_tokens.extend(_dc_nicks.values())
             _mention_re = re.compile(r"@(" + "|".join(re.escape(t) for t in sorted(set(_all_mention_tokens), key=len, reverse=True)) + r")")
             if auto_tts_enabled:
-                # JSから「現在再生中のts_safe」を取得してログ表示を制御
                 _ts_map = _auto_state.get("ts_map", {})
-                _now_playing_ts_safe = streamlit_js_eval(
-                    js_expressions="window.parent._autoTtsNowPlaying || ''",
-                    key=f"tnp_{int(time.time()) // 5}",
-                ) or ""
-                _now_playing_orig_ts = _ts_map.get(_now_playing_ts_safe, "")
+                _now_playing_orig_ts = _ts_map.get(_tts_now_playing_raw, "")
                 if _now_playing_orig_ts:
                     _display_log = [e for e in auto_log if e.get("timestamp", "") <= _now_playing_orig_ts]
                 else:
-                    # audio未開始: TTS有効化時点までのエントリのみ表示
                     _display_log = [e for e in auto_log if e.get("timestamp", "") <= _auto_state.get("tts_last_shown_ts", "")]
             else:
                 _display_log = auto_log
@@ -1044,9 +1047,7 @@ with tab_auto:
         if auto_tts_enabled:
             import base64 as _b64
             _wav_pending = len(list(TTS_QUEUE_DIR.glob("*.wav")))
-            _now_p = _auto_state.get("ts_map", {}).get(
-                streamlit_js_eval(js_expressions="window.parent._autoTtsNowPlaying || ''",
-                                  key=f"tnp_cap_{int(time.time()) // 5}") or "", "—")
+            _now_p = _auto_state.get("ts_map", {}).get(_tts_now_playing_raw, "—")
             st.caption(f"🔊 再生中: {_now_p[11:19] if len(_now_p) > 11 else _now_p} / WAV待機: {_wav_pending}件")
             for _wav_path in sorted(TTS_QUEUE_DIR.glob("*.wav")):
                 try:
