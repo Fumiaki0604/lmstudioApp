@@ -105,7 +105,7 @@ TTS_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _do_tts_synthesis(text: str, speaker_id: int, timestamp: str, tts_mode: str, api_key: str, auto_state: dict):
-    """バックグラウンドでTTS合成しTTS_QUEUE_DIRに保存する。WAVが完成したらrenderがpickupする。"""
+    """バックグラウンドでTTS合成しTTS_QUEUE_DIRに保存する。ts_mapにts_safe→timestampの対応を記録。"""
     clean = strip_urls_for_tts(text)
     ts_safe = timestamp.replace(":", "-").replace("+", "p").replace(".", "_")
     try:
@@ -121,6 +121,9 @@ def _do_tts_synthesis(text: str, speaker_id: int, timestamp: str, tts_mode: str,
                 tmp.rename(wav)
     except Exception:
         pass
+    finally:
+        # ts_safe → original timestamp の対応を保持（JS再生中ts_safeからログエントリを特定するため）
+        auto_state.setdefault("ts_map", {})[ts_safe] = timestamp
 
 
 # =============================
@@ -985,15 +988,18 @@ with tab_auto:
                 _all_mention_tokens.extend(_dc_nicks.values())
             _mention_re = re.compile(r"@(" + "|".join(re.escape(t) for t in sorted(set(_all_mention_tokens), key=len, reverse=True)) + r")")
             if auto_tts_enabled:
-                # 次の未表示エントリのWAVが存在するときだけ1つ進める
-                _last_shown_ts = _auto_state.get("tts_last_shown_ts", "")
-                _pending = [e for e in auto_log if e.get("timestamp", "") > _last_shown_ts]
-                if _pending:
-                    _nxt = _pending[0]
-                    _nxt_ts_safe = _nxt["timestamp"].replace(":", "-").replace("+", "p").replace(".", "_")
-                    if (TTS_QUEUE_DIR / f"{_nxt_ts_safe}.wav").exists():
-                        _auto_state["tts_last_shown_ts"] = _nxt["timestamp"]
-                _display_log = [e for e in auto_log if e.get("timestamp", "") <= _auto_state.get("tts_last_shown_ts", "")]
+                # JSから「現在再生中のts_safe」を取得してログ表示を制御
+                _ts_map = _auto_state.get("ts_map", {})
+                _now_playing_ts_safe = streamlit_js_eval(
+                    js_expressions="window.parent._autoTtsNowPlaying || ''",
+                    key=f"tnp_{int(time.time()) // 5}",
+                ) or ""
+                _now_playing_orig_ts = _ts_map.get(_now_playing_ts_safe, "")
+                if _now_playing_orig_ts:
+                    _display_log = [e for e in auto_log if e.get("timestamp", "") <= _now_playing_orig_ts]
+                else:
+                    # audio未開始: TTS有効化時点までのエントリのみ表示
+                    _display_log = [e for e in auto_log if e.get("timestamp", "") <= _auto_state.get("tts_last_shown_ts", "")]
             else:
                 _display_log = auto_log
             for entry in _display_log[-30:]:
@@ -1033,20 +1039,20 @@ with tab_auto:
                     threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
                     threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
 
-        # TTS: 表示を進めたエントリ1件のWAVだけ注入（他はディスクに残す）
-        # 次のrenderで次のWAVが注入されることで自然に1件ずつ同期する
+        # TTS: 全WAVをキューに注入（再生順序はJS側が制御）
+        # 表示はJSの_autoTtsNowPlayingを次のrenderで読み取って制御する
         if auto_tts_enabled:
             import base64 as _b64
-            _inject_ts = _auto_state.get("tts_last_shown_ts", "")
-            _inject_ts_safe = _inject_ts.replace(":", "-").replace("+", "p").replace(".", "_") if _inject_ts else ""
-            _inject_wav = TTS_QUEUE_DIR / f"{_inject_ts_safe}.wav" if _inject_ts_safe else None
             _wav_pending = len(list(TTS_QUEUE_DIR.glob("*.wav")))
-            st.caption(f"🔊 表示中: {_inject_ts[11:19] if _inject_ts else '—'} / WAV待機: {_wav_pending}件")
-            if _inject_wav and _inject_wav.exists():
+            _now_p = _auto_state.get("ts_map", {}).get(
+                streamlit_js_eval(js_expressions="window.parent._autoTtsNowPlaying || ''",
+                                  key=f"tnp_cap_{int(time.time()) // 5}") or "", "—")
+            st.caption(f"🔊 再生中: {_now_p[11:19] if len(_now_p) > 11 else _now_p} / WAV待機: {_wav_pending}件")
+            for _wav_path in sorted(TTS_QUEUE_DIR.glob("*.wav")):
                 try:
-                    _audio_data = _inject_wav.read_bytes()
+                    _audio_data = _wav_path.read_bytes()
                     _a64 = _b64.b64encode(_audio_data).decode()
-                    _play_ts = _inject_ts_safe
+                    _play_ts = _wav_path.stem
                     st.components.v1.html(f"""<script>
 (function(){{
   try {{
@@ -1055,18 +1061,19 @@ with tab_auto:
     p._autoTtsLastTs = '{_play_ts}';
     if (!p._autoTtsQueue) p._autoTtsQueue = [];
     if (p._autoTtsBusy === undefined) p._autoTtsBusy = false;
-    p._autoTtsQueue.push('data:audio/wav;base64,{_a64}');
+    p._autoTtsQueue.push({{src: 'data:audio/wav;base64,{_a64}', ts: '{_play_ts}'}});
     function _playNext() {{
       if (p._autoTtsBusy && (Date.now() - (p._autoTtsBusyAt || 0) < 120000)) return;
       if (!p._autoTtsQueue || p._autoTtsQueue.length === 0) return;
       p._autoTtsBusy = true; p._autoTtsBusyAt = Date.now();
       try {{
+        var item = p._autoTtsQueue.shift();
+        p._autoTtsNowPlaying = item.ts;
         var AC = p.Audio || Audio;
         if (!p._autoTtsAudio) p._autoTtsAudio = new AC();
-        var src = p._autoTtsQueue.shift();
         p._autoTtsAudio.onended = function() {{ p._autoTtsBusy = false; _playNext(); }};
         p._autoTtsAudio.onerror = function() {{ p._autoTtsBusy = false; _playNext(); }};
-        p._autoTtsAudio.src = src;
+        p._autoTtsAudio.src = item.src;
         p._autoTtsAudio.play().catch(function() {{ p._autoTtsBusy = false; _playNext(); }});
       }} catch(e2) {{ p._autoTtsBusy = false; }}
     }}
@@ -1078,7 +1085,7 @@ with tab_auto:
   }}
 }})();
 </script>""", height=0)
-                    _inject_wav.unlink()
+                    _wav_path.unlink()
                 except Exception:
                     pass
 
