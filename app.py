@@ -1007,12 +1007,15 @@ with tab_auto:
       if (p._autoTtsBusy) return;
       if (!p._autoTtsQueue || p._autoTtsQueue.length === 0) return;
       p._autoTtsBusy = true;
-      if (!p._autoTtsAudio) p._autoTtsAudio = new p.Audio();
-      var src = p._autoTtsQueue.shift();
-      p._autoTtsAudio.onended = function() {{ p._autoTtsBusy = false; _playNext(); }};
-      p._autoTtsAudio.onerror = function() {{ p._autoTtsBusy = false; _playNext(); }};
-      p._autoTtsAudio.src = src;
-      p._autoTtsAudio.play().catch(function() {{ p._autoTtsBusy = false; _playNext(); }});
+      try {{
+        var AC = p.Audio || Audio;
+        if (!p._autoTtsAudio) p._autoTtsAudio = new AC();
+        var src = p._autoTtsQueue.shift();
+        p._autoTtsAudio.onended = function() {{ p._autoTtsBusy = false; _playNext(); }};
+        p._autoTtsAudio.onerror = function() {{ p._autoTtsBusy = false; _playNext(); }};
+        p._autoTtsAudio.src = src;
+        p._autoTtsAudio.play().catch(function() {{ p._autoTtsBusy = false; _playNext(); }});
+      }} catch(e2) {{ p._autoTtsBusy = false; }}
     }}
     _playNext();
   }} catch(e) {{
