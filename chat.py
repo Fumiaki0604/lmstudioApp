@@ -314,6 +314,7 @@ def normalize_model_output(text: str) -> str:
     if not text:
         return text
     text = text.replace("<br/>", "\n").replace("<br>", "\n").replace("&nbsp;", " ")
+    text = re.sub(r"^#+\s+", "", text, flags=re.MULTILINE)  # Markdown見出し除去
     text = re.sub(r"\[MOOD:[^\]]+\]\s*", "", text)
     # （話題提供）がLLMにechoされた場合は除去
     text = re.sub(r"[（(]話題提供[）)]\s*", "", text)

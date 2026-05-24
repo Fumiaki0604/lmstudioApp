@@ -1004,9 +1004,9 @@ with tab_auto:
     if (p._autoTtsBusy === undefined) p._autoTtsBusy = false;
     p._autoTtsQueue.push('data:audio/wav;base64,{_a64}');
     function _playNext() {{
-      if (p._autoTtsBusy) return;
+      if (p._autoTtsBusy && (Date.now() - (p._autoTtsBusyAt || 0) < 120000)) return;
       if (!p._autoTtsQueue || p._autoTtsQueue.length === 0) return;
-      p._autoTtsBusy = true;
+      p._autoTtsBusy = true; p._autoTtsBusyAt = Date.now();
       try {{
         var AC = p.Audio || Audio;
         if (!p._autoTtsAudio) p._autoTtsAudio = new AC();
