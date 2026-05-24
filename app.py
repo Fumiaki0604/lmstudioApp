@@ -105,8 +105,9 @@ TTS_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _do_tts_synthesis(text: str, speaker_id: int, timestamp: str, tts_mode: str, api_key: str, auto_state: dict):
-    """バックグラウンドでTTS合成しTTS_QUEUE_DIRに保存する。完了後にtts_ready_tsを更新。"""
+    """バックグラウンドでTTS合成しTTS_QUEUE_DIRに保存する。WAVが完成したらrenderがpickupする。"""
     clean = strip_urls_for_tts(text)
+    ts_safe = timestamp.replace(":", "-").replace("+", "p").replace(".", "_")
     try:
         if clean:
             if tts_mode == "local" or speaker_id >= 800_000_000:
@@ -114,17 +115,12 @@ def _do_tts_synthesis(text: str, speaker_id: int, timestamp: str, tts_mode: str,
             else:
                 audio, _ = synthesize_voice_full(clean, speaker_id, api_key=api_key)
             if audio:
-                ts_safe = timestamp.replace(":", "-").replace("+", "p").replace(".", "_")
                 tmp = TTS_QUEUE_DIR / f"{ts_safe}.tmp"
                 wav = TTS_QUEUE_DIR / f"{ts_safe}.wav"
                 tmp.write_bytes(audio)
                 tmp.rename(wav)
     except Exception:
         pass
-    finally:
-        # 合成成功・失敗にかかわらずこのエントリは表示OKにする
-        if timestamp > auto_state.get("tts_ready_ts", ""):
-            auto_state["tts_ready_ts"] = timestamp
 
 
 # =============================
@@ -568,6 +564,7 @@ with tab_auto:
                 st.session_state["auto_log"] = []
                 _auto_save_log([])
                 st.session_state["auto_tts_last_ts"] = ""
+                _auto_state["tts_last_shown_ts"] = ""
                 for _f in TTS_QUEUE_DIR.glob("*.wav"):
                     try: _f.unlink()
                     except Exception: pass
@@ -583,7 +580,7 @@ with tab_auto:
             _auto_state["tts_api_key"] = get_tts_api_key()
             # 既存ログは合成なしで全表示済み扱い
             _cur_log = _auto_load_log()
-            _auto_state["tts_ready_ts"] = _cur_log[-1].get("timestamp", "") if _cur_log else ""
+            _auto_state["tts_last_shown_ts"] = _cur_log[-1].get("timestamp", "") if _cur_log else ""
         if not auto_tts_enabled:
             _auto_state["tts_enabled"] = False
         st.session_state["auto_tts_prev_enabled"] = auto_tts_enabled
@@ -987,8 +984,18 @@ with tab_auto:
                 _dc_nicks = (_disp_spk_data.get(_dc["name"], {}).get("calls_profile") or {}).get("char_nicknames") or {}
                 _all_mention_tokens.extend(_dc_nicks.values())
             _mention_re = re.compile(r"@(" + "|".join(re.escape(t) for t in sorted(set(_all_mention_tokens), key=len, reverse=True)) + r")")
-            _tts_ready_ts = _auto_state.get("tts_ready_ts", "") if auto_tts_enabled else ""
-            _display_log = [e for e in auto_log if not auto_tts_enabled or e.get("timestamp", "") <= _tts_ready_ts]
+            if auto_tts_enabled:
+                # 次の未表示エントリのWAVが存在するときだけ1つ進める
+                _last_shown_ts = _auto_state.get("tts_last_shown_ts", "")
+                _pending = [e for e in auto_log if e.get("timestamp", "") > _last_shown_ts]
+                if _pending:
+                    _nxt = _pending[0]
+                    _nxt_ts_safe = _nxt["timestamp"].replace(":", "-").replace("+", "p").replace(".", "_")
+                    if (TTS_QUEUE_DIR / f"{_nxt_ts_safe}.wav").exists():
+                        _auto_state["tts_last_shown_ts"] = _nxt["timestamp"]
+                _display_log = [e for e in auto_log if e.get("timestamp", "") <= _auto_state.get("tts_last_shown_ts", "")]
+            else:
+                _display_log = auto_log
             for entry in _display_log[-30:]:
                 # アイコンは常に現在のspeaker_dataを優先（ログ埋め込みは変更追従しないため）
                 _entry_name = entry.get("name", "")
