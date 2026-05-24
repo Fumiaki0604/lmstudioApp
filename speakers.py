@@ -178,7 +178,7 @@ def _detect_mention(text: str, member_names: list, nickname_to_name: Optional[di
     return None
 
 
-@st.cache_data(ttl=60)
+@st.cache_data
 def load_speakers() -> list:
     if SPEAKERS_FILE.exists():
         return json.loads(SPEAKERS_FILE.read_text(encoding="utf-8"))
