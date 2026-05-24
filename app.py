@@ -973,25 +973,22 @@ with tab_auto:
                     threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
                     threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
 
-        # TTS: 新着エントリを読み上げ
-        # st.audio()はリレンダーでDOMが消えて止まるため、window.parent._autoTtsAudioに保持してリレンダー耐性を持たせる
+        # TTS: 新着エントリをまとめてキューに積む
+        # 1レンダーで複数エントリを処理し「表示→読み上げ」のズレを最小化
         if auto_tts_enabled and auto_log:
             _last_ts = st.session_state.get("auto_tts_last_ts", "")
-            # タイムスタンプが_last_tsより新しい最初のエントリを再生
-            _tts_entry = next(
-                (e for e in auto_log if e.get("timestamp", "") > _last_ts), None
-            )
-            if _tts_entry:
+            _new_tts_entries = [e for e in auto_log if e.get("timestamp", "") > _last_ts]
+            import base64 as _b64
+            _tts_mode = get_tts_mode()
+            for _tts_entry in _new_tts_entries:
                 _tts_text = strip_urls_for_tts(_tts_entry.get("text", ""))
                 _tts_spk = _tts_entry.get("speaker_id", 3)
-                _tts_mode = get_tts_mode()
                 try:
                     if _tts_mode == "local" or _tts_spk >= 800_000_000:
-                        _audio_data, _tts_err = synthesize_voice_local_full(_tts_text, _tts_spk)
+                        _audio_data, _ = synthesize_voice_local_full(_tts_text, _tts_spk)
                     else:
-                        _audio_data, _tts_err = synthesize_voice_full(_tts_text, _tts_spk, api_key=get_tts_api_key())
+                        _audio_data, _ = synthesize_voice_full(_tts_text, _tts_spk, api_key=get_tts_api_key())
                     if _audio_data:
-                        import base64 as _b64
                         _a64 = _b64.b64encode(_audio_data).decode()
                         _play_ts = _tts_entry.get("timestamp", "")
                         st.components.v1.html(f"""<script>
