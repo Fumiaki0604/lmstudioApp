@@ -1001,20 +1001,24 @@ with tab_auto:
     if (p._autoTtsLastTs === '{_play_ts}') return;
     p._autoTtsLastTs = '{_play_ts}';
     if (!p._autoTtsQueue) p._autoTtsQueue = [];
+    if (p._autoTtsBusy === undefined) p._autoTtsBusy = false;
     p._autoTtsQueue.push('data:audio/wav;base64,{_a64}');
     function _playNext() {{
+      if (p._autoTtsBusy) return;
       if (!p._autoTtsQueue || p._autoTtsQueue.length === 0) return;
-      if (p._autoTtsAudio && !p._autoTtsAudio.paused && !p._autoTtsAudio.ended) return;
+      p._autoTtsBusy = true;
       if (!p._autoTtsAudio) p._autoTtsAudio = new p.Audio();
       var src = p._autoTtsQueue.shift();
-      p._autoTtsAudio.onended = _playNext;
+      p._autoTtsAudio.onended = function() {{ p._autoTtsBusy = false; _playNext(); }};
+      p._autoTtsAudio.onerror = function() {{ p._autoTtsBusy = false; _playNext(); }};
       p._autoTtsAudio.src = src;
-      p._autoTtsAudio.play().catch(function(){{}});
+      p._autoTtsAudio.play().catch(function() {{ p._autoTtsBusy = false; _playNext(); }});
     }}
     _playNext();
   }} catch(e) {{
-    var a = new Audio('data:audio/wav;base64,{_a64}');
-    a.play();
+    if (!window._autoTtsFallback) window._autoTtsFallback = new Audio();
+    window._autoTtsFallback.src = 'data:audio/wav;base64,{_a64}';
+    window._autoTtsFallback.play().catch(function(){{}});
   }}
 }})();
 </script>""", height=0)

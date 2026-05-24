@@ -82,6 +82,8 @@ def split_text_for_tts(text: str, max_len: int = 200) -> list:
 def strip_urls_for_tts(text: str) -> str:
     text = re.sub(r"https?://[^\s]+", "", text)
     text = re.sub(r"詳しくはこちら→?\s*", "", text)
+    text = re.sub(r"\[MOOD:[^\]]+\]\s*", "", text)
+    text = re.sub(r"[（(]注[:：][^）)]{0,150}[）)]?", "", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
