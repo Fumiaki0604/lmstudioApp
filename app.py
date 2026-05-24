@@ -100,6 +100,28 @@ STORE_DIR = Path.home() / ".lmstudio_assistant"
 PROMPTS_FILE = STORE_DIR / "prompts.json"
 SETTINGS_FILE = STORE_DIR / "settings.json"
 CHAT_SESSIONS_DIR = STORE_DIR / "chat_sessions"
+TTS_QUEUE_DIR = STORE_DIR / "tts_queue"
+TTS_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _do_tts_synthesis(text: str, speaker_id: int, timestamp: str, tts_mode: str, api_key: str):
+    """バックグラウンドでTTS合成しTTS_QUEUE_DIRに保存する。"""
+    clean = strip_urls_for_tts(text)
+    if not clean:
+        return
+    try:
+        if tts_mode == "local" or speaker_id >= 800_000_000:
+            audio, _ = synthesize_voice_local_full(clean, speaker_id)
+        else:
+            audio, _ = synthesize_voice_full(clean, speaker_id, api_key=api_key)
+        if audio:
+            ts_safe = timestamp.replace(":", "-").replace("+", "p").replace(".", "_")
+            tmp = TTS_QUEUE_DIR / f"{ts_safe}.tmp"
+            wav = TTS_QUEUE_DIR / f"{ts_safe}.wav"
+            tmp.write_bytes(audio)
+            tmp.rename(wav)
+    except Exception:
+        pass
 
 
 # =============================
@@ -530,6 +552,10 @@ with tab_auto:
         with col_stop:
             if st.button("⏹ 停止", disabled=not st.session_state["auto_running"]):
                 st.session_state["auto_running"] = False
+                _auto_state["tts_enabled"] = False
+                for _f in TTS_QUEUE_DIR.glob("*.wav"):
+                    try: _f.unlink()
+                    except Exception: pass
                 _stop_log = _auto_load_log()
                 if _stop_log:
                     threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
@@ -539,12 +565,21 @@ with tab_auto:
                 st.session_state["auto_log"] = []
                 _auto_save_log([])
                 st.session_state["auto_tts_last_ts"] = ""
+                for _f in TTS_QUEUE_DIR.glob("*.wav"):
+                    try: _f.unlink()
+                    except Exception: pass
 
         auto_tts_enabled = st.checkbox("🔊 読み上げ", value=False, key="auto_tts_enabled")
-        # チェックをONにした瞬間に過去ログをスキップ（その時点の最新タイムスタンプを記録）
+        # チェックをONにした瞬間: キューをクリアしてモード/keyを_auto_stateへ保存
         if auto_tts_enabled and not st.session_state.get("auto_tts_prev_enabled", False):
-            _cur_log = _auto_load_log()
-            st.session_state["auto_tts_last_ts"] = _cur_log[-1].get("timestamp", "") if _cur_log else ""
+            for _f in TTS_QUEUE_DIR.glob("*.wav"):
+                try: _f.unlink()
+                except Exception: pass
+            _auto_state["tts_enabled"] = True
+            _auto_state["tts_mode"] = get_tts_mode()
+            _auto_state["tts_api_key"] = get_tts_api_key()
+        if not auto_tts_enabled:
+            _auto_state["tts_enabled"] = False
         st.session_state["auto_tts_prev_enabled"] = auto_tts_enabled
 
         st.caption(f"参加キャラ: {len(auto_all_chars)}人 / next={int(st.session_state['auto_next_time'] - time.time())}秒後 / 生成中={_auto_state['generating']}")
@@ -839,6 +874,15 @@ with tab_auto:
                             "speaker_id": _tts_id,
                         })
                         _auto_save_log(_log)
+                        # TTS: バックグラウンドで即時合成してキューに積む
+                        if _auto_state.get("tts_enabled"):
+                            threading.Thread(
+                                target=_do_tts_synthesis,
+                                args=(_reply, _tts_id, _now.isoformat(),
+                                      _auto_state.get("tts_mode", "local"),
+                                      _auto_state.get("tts_api_key", "")),
+                                daemon=True,
+                            ).start()
                         # URL検出 → バックグラウンドでfetch+要約キャッシュ
                         for _url in _URL_RE.findall(_reply):
                             if not get_url_summary(_url):
@@ -973,25 +1017,17 @@ with tab_auto:
                     threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
                     threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
 
-        # TTS: 新着エントリをまとめてキューに積む
-        # 1レンダーで複数エントリを処理し「表示→読み上げ」のズレを最小化
-        if auto_tts_enabled and auto_log:
-            _last_ts = st.session_state.get("auto_tts_last_ts", "")
-            _new_tts_entries = [e for e in auto_log if e.get("timestamp", "") > _last_ts]
+        # TTS: バックグラウンドで事前合成済みのwavファイルをキューに注入
+        # 合成はメッセージ生成直後のスレッドで実行済みなのでレンダーはファイル読み込みのみ
+        if auto_tts_enabled:
             import base64 as _b64
-            _tts_mode = get_tts_mode()
-            for _tts_entry in _new_tts_entries:
-                _tts_text = strip_urls_for_tts(_tts_entry.get("text", ""))
-                _tts_spk = _tts_entry.get("speaker_id", 3)
+            _wav_files = sorted(TTS_QUEUE_DIR.glob("*.wav"))
+            for _wav_path in _wav_files:
                 try:
-                    if _tts_mode == "local" or _tts_spk >= 800_000_000:
-                        _audio_data, _ = synthesize_voice_local_full(_tts_text, _tts_spk)
-                    else:
-                        _audio_data, _ = synthesize_voice_full(_tts_text, _tts_spk, api_key=get_tts_api_key())
-                    if _audio_data:
-                        _a64 = _b64.b64encode(_audio_data).decode()
-                        _play_ts = _tts_entry.get("timestamp", "")
-                        st.components.v1.html(f"""<script>
+                    _audio_data = _wav_path.read_bytes()
+                    _a64 = _b64.b64encode(_audio_data).decode()
+                    _play_ts = _wav_path.stem
+                    st.components.v1.html(f"""<script>
 (function(){{
   try {{
     var p = window.parent;
@@ -1022,9 +1058,9 @@ with tab_auto:
   }}
 }})();
 </script>""", height=0)
+                    _wav_path.unlink()
                 except Exception:
                     pass
-                st.session_state["auto_tts_last_ts"] = _tts_entry.get("timestamp", "")
 
         if st.session_state["auto_running"]:
             remaining = max(0, int(st.session_state["auto_next_time"] - time.time()))
