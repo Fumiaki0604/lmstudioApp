@@ -536,6 +536,11 @@ with tab_auto:
         js_expressions="window.parent._autoTtsNowPlaying || ''",
         key=f"tnp_{int(time.time()) // 5}",
     ) or ""
+    # キー切り替わり時に一瞬Noneが返るのでキャッシュで補完
+    if _tts_now_playing_raw:
+        st.session_state["_tts_last_known_playing"] = _tts_now_playing_raw
+    else:
+        _tts_now_playing_raw = st.session_state.get("_tts_last_known_playing", "")
 
     st.subheader("🏠 自律会話")
     st.caption("キャラクター同士がユーザー介在なしで会話します。")
