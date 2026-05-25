@@ -528,19 +528,9 @@ def _do_soul_updates(log_entries: list, all_chars: list, base_url: str, model: s
 tab_auto, tab_note, tab_autogen, tab_settings = st.tabs(["🏠 自律会話", "📝 note記事", "🤖 AutoGen PoC", "⚙️ 設定"])
 
 with tab_auto:
-    # TTS再生中ts_safeをJSから取得（renderごと1回、コンポーネントの余白をCSSで除去）
     st.markdown("""<style>
 [data-testid="stCustomComponentV1"]{margin:0!important;padding:0!important;min-height:0!important;line-height:0!important;}
 </style>""", unsafe_allow_html=True)
-    _tts_now_playing_raw = streamlit_js_eval(
-        js_expressions="window.parent._autoTtsNowPlaying || ''",
-        key=f"tnp_{int(time.time()) // 5}",
-    ) or ""
-    # キー切り替わり時に一瞬Noneが返るのでキャッシュで補完
-    if _tts_now_playing_raw:
-        st.session_state["_tts_last_known_playing"] = _tts_now_playing_raw
-    else:
-        _tts_now_playing_raw = st.session_state.get("_tts_last_known_playing", "")
 
     st.subheader("🏠 自律会話")
     st.caption("キャラクター同士がユーザー介在なしで会話します。")
@@ -990,6 +980,54 @@ with tab_auto:
             )
             _t.start()
 
+        # TTS: 表示フィルターより前に次の1件を注入 → 同じrenderでメッセージと音声を同期
+        if auto_tts_enabled:
+            import base64 as _b64
+            _wav_files = sorted(TTS_QUEUE_DIR.glob("*.wav"))
+            if _wav_files:
+                _inject_wav = _wav_files[0]
+                try:
+                    _audio_data = _inject_wav.read_bytes()
+                    _a64 = _b64.b64encode(_audio_data).decode()
+                    _play_ts = _inject_wav.stem
+                    _orig_ts_inject = _auto_state.get("ts_map", {}).get(_play_ts, "")
+                    st.components.v1.html(f"""<script>
+(function(){{
+  try {{
+    var p = window.parent;
+    if (p._autoTtsLastTs === '{_play_ts}') return;
+    p._autoTtsLastTs = '{_play_ts}';
+    if (!p._autoTtsQueue) p._autoTtsQueue = [];
+    if (p._autoTtsBusy === undefined) p._autoTtsBusy = false;
+    p._autoTtsQueue.push('data:audio/wav;base64,{_a64}');
+    function _playNext() {{
+      if (p._autoTtsBusy && (Date.now() - (p._autoTtsBusyAt || 0) < 120000)) return;
+      if (!p._autoTtsQueue || p._autoTtsQueue.length === 0) return;
+      p._autoTtsBusy = true; p._autoTtsBusyAt = Date.now();
+      try {{
+        var AC = p.Audio || Audio;
+        if (!p._autoTtsAudio) p._autoTtsAudio = new AC();
+        var src = p._autoTtsQueue.shift();
+        p._autoTtsAudio.onended = function() {{ p._autoTtsBusy = false; _playNext(); }};
+        p._autoTtsAudio.onerror = function() {{ p._autoTtsBusy = false; _playNext(); }};
+        p._autoTtsAudio.src = src;
+        p._autoTtsAudio.play().catch(function() {{ p._autoTtsBusy = false; _playNext(); }});
+      }} catch(e2) {{ p._autoTtsBusy = false; }}
+    }}
+    _playNext();
+  }} catch(e) {{
+    if (!window._autoTtsFallback) window._autoTtsFallback = new Audio();
+    window._autoTtsFallback.src = 'data:audio/wav;base64,{_a64}';
+    window._autoTtsFallback.play().catch(function(){{}});
+  }}
+}})();
+</script>""", height=0)
+                    _inject_wav.unlink()
+                    if _orig_ts_inject:
+                        _auto_state["tts_injected_ts"] = _orig_ts_inject
+                except Exception:
+                    pass
+
         # ログ表示（ファイルから読み込み）
         auto_log = _auto_load_log()
         if auto_log:
@@ -1002,12 +1040,8 @@ with tab_auto:
                 _all_mention_tokens.extend(_dc_nicks.values())
             _mention_re = re.compile(r"@(" + "|".join(re.escape(t) for t in sorted(set(_all_mention_tokens), key=len, reverse=True)) + r")")
             if auto_tts_enabled:
-                _ts_map = _auto_state.get("ts_map", {})
-                _now_playing_orig_ts = _ts_map.get(_tts_now_playing_raw, "")
-                if _now_playing_orig_ts:
-                    _display_log = [e for e in auto_log if e.get("timestamp", "") <= _now_playing_orig_ts]
-                else:
-                    _display_log = [e for e in auto_log if e.get("timestamp", "") <= _auto_state.get("tts_last_shown_ts", "")]
+                _injected_ts = _auto_state.get("tts_injected_ts", _auto_state.get("tts_last_shown_ts", ""))
+                _display_log = [e for e in auto_log if e.get("timestamp", "") <= _injected_ts]
             else:
                 _display_log = auto_log
             for entry in _display_log[-30:]:
@@ -1047,53 +1081,10 @@ with tab_auto:
                     threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
                     threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
 
-        # TTS: 全WAVをキューに注入（再生順序はJS側が制御）
-        # 表示はJSの_autoTtsNowPlayingを次のrenderで読み取って制御する
         if auto_tts_enabled:
-            import base64 as _b64
             _wav_pending = len(list(TTS_QUEUE_DIR.glob("*.wav")))
-            _now_p = _auto_state.get("ts_map", {}).get(_tts_now_playing_raw, "—")
-            st.caption(f"🔊 再生中: {_now_p[11:19] if len(_now_p) > 11 else _now_p} / WAV待機: {_wav_pending}件")
-            for _wav_path in sorted(TTS_QUEUE_DIR.glob("*.wav")):
-                try:
-                    _audio_data = _wav_path.read_bytes()
-                    _a64 = _b64.b64encode(_audio_data).decode()
-                    _play_ts = _wav_path.stem
-                    st.components.v1.html(f"""<script>
-(function(){{
-  try {{
-    var p = window.parent;
-    if (p._autoTtsLastTs === '{_play_ts}') return;
-    p._autoTtsLastTs = '{_play_ts}';
-    if (!p._autoTtsQueue) p._autoTtsQueue = [];
-    if (p._autoTtsBusy === undefined) p._autoTtsBusy = false;
-    p._autoTtsQueue.push({{src: 'data:audio/wav;base64,{_a64}', ts: '{_play_ts}'}});
-    function _playNext() {{
-      if (p._autoTtsBusy && (Date.now() - (p._autoTtsBusyAt || 0) < 120000)) return;
-      if (!p._autoTtsQueue || p._autoTtsQueue.length === 0) return;
-      p._autoTtsBusy = true; p._autoTtsBusyAt = Date.now();
-      try {{
-        var item = p._autoTtsQueue.shift();
-        p._autoTtsNowPlaying = item.ts;
-        var AC = p.Audio || Audio;
-        if (!p._autoTtsAudio) p._autoTtsAudio = new AC();
-        p._autoTtsAudio.onended = function() {{ p._autoTtsBusy = false; _playNext(); }};
-        p._autoTtsAudio.onerror = function() {{ p._autoTtsBusy = false; _playNext(); }};
-        p._autoTtsAudio.src = item.src;
-        p._autoTtsAudio.play().catch(function() {{ p._autoTtsBusy = false; _playNext(); }});
-      }} catch(e2) {{ p._autoTtsBusy = false; }}
-    }}
-    _playNext();
-  }} catch(e) {{
-    if (!window._autoTtsFallback) window._autoTtsFallback = new Audio();
-    window._autoTtsFallback.src = 'data:audio/wav;base64,{_a64}';
-    window._autoTtsFallback.play().catch(function(){{}});
-  }}
-}})();
-</script>""", height=0)
-                    _wav_path.unlink()
-                except Exception:
-                    pass
+            if _wav_pending:
+                st.caption(f"🔊 WAV待機: {_wav_pending}件")
 
         if st.session_state["auto_running"]:
             remaining = max(0, int(st.session_state["auto_next_time"] - time.time()))
