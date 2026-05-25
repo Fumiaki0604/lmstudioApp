@@ -981,7 +981,7 @@ with tab_auto:
                 if not _sp_candidates:
                     _sp_candidates = auto_all_chars
                 _next_speaker = random.choice(_sp_candidates)
-                st.session_state["auto_next_time"] = time.time() + random.randint(30, 90)
+                st.session_state["auto_next_time"] = time.time() + random.randint(10, 30)
             _auto_state["generating"] = True
             _t = threading.Thread(
                 target=_auto_gen_thread,
