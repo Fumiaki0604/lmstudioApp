@@ -980,17 +980,23 @@ with tab_auto:
             )
             _t.start()
 
-        # TTS: 表示フィルターより前に次の1件を注入 → 同じrenderでメッセージと音声を同期
+        # TTS: 表示ゲートを1件進め、全WAVを注入（キュー途切れ防止）
         if auto_tts_enabled:
             import base64 as _b64
             _wav_files = sorted(TTS_QUEUE_DIR.glob("*.wav"))
-            if _wav_files:
-                _inject_wav = _wav_files[0]
+            # 表示ゲートを1件だけ進める
+            _cur_inj = _auto_state.get("tts_injected_ts", _auto_state.get("tts_last_shown_ts", ""))
+            for _wf in _wav_files:
+                _wf_orig = _auto_state.get("ts_map", {}).get(_wf.stem, "")
+                if _wf_orig and _wf_orig > _cur_inj:
+                    _auto_state["tts_injected_ts"] = _wf_orig
+                    break
+            # 全WAVを注入してキューを途切れさせない
+            for _wav_path in _wav_files:
                 try:
-                    _audio_data = _inject_wav.read_bytes()
+                    _audio_data = _wav_path.read_bytes()
                     _a64 = _b64.b64encode(_audio_data).decode()
-                    _play_ts = _inject_wav.stem
-                    _orig_ts_inject = _auto_state.get("ts_map", {}).get(_play_ts, "")
+                    _play_ts = _wav_path.stem
                     st.components.v1.html(f"""<script>
 (function(){{
   try {{
@@ -1022,9 +1028,7 @@ with tab_auto:
   }}
 }})();
 </script>""", height=0)
-                    _inject_wav.unlink()
-                    if _orig_ts_inject:
-                        _auto_state["tts_injected_ts"] = _orig_ts_inject
+                    _wav_path.unlink()
                 except Exception:
                     pass
 
