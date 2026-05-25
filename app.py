@@ -981,7 +981,7 @@ with tab_auto:
                 if not _sp_candidates:
                     _sp_candidates = auto_all_chars
                 _next_speaker = random.choice(_sp_candidates)
-                st.session_state["auto_next_time"] = time.time() + random.randint(10, 30)
+                st.session_state["auto_next_time"] = time.time() + random.randint(30, 90)
             _auto_state["generating"] = True
             _t = threading.Thread(
                 target=_auto_gen_thread,
@@ -1001,7 +1001,15 @@ with tab_auto:
                 _dc_nicks = (_disp_spk_data.get(_dc["name"], {}).get("calls_profile") or {}).get("char_nicknames") or {}
                 _all_mention_tokens.extend(_dc_nicks.values())
             _mention_re = re.compile(r"@(" + "|".join(re.escape(t) for t in sorted(set(_all_mention_tokens), key=len, reverse=True)) + r")")
-            _display_log = auto_log
+            if auto_tts_enabled:
+                _ts_map = _auto_state.get("ts_map", {})
+                _now_playing_orig_ts = _ts_map.get(_tts_now_playing_raw, "")
+                if _now_playing_orig_ts:
+                    _display_log = [e for e in auto_log if e.get("timestamp", "") <= _now_playing_orig_ts]
+                else:
+                    _display_log = [e for e in auto_log if e.get("timestamp", "") <= _auto_state.get("tts_last_shown_ts", "")]
+            else:
+                _display_log = auto_log
             for entry in _display_log[-30:]:
                 # アイコンは常に現在のspeaker_dataを優先（ログ埋め込みは変更追従しないため）
                 _entry_name = entry.get("name", "")
@@ -1075,7 +1083,7 @@ with tab_auto:
         p._autoTtsAudio.play().catch(function() {{ p._autoTtsBusy = false; _playNext(); }});
       }} catch(e2) {{ p._autoTtsBusy = false; }}
     }}
-    setTimeout(_playNext, 5000);
+    _playNext();
   }} catch(e) {{
     if (!window._autoTtsFallback) window._autoTtsFallback = new Audio();
     window._autoTtsFallback.src = 'data:audio/wav;base64,{_a64}';
