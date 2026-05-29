@@ -603,12 +603,22 @@ def check_output(reply: str, state: ConversationState,
     if speaker_name and move_type != "short_reaction" and len(reply) >= 8:
         _spk_texts = state.speaker_recent_texts.get(speaker_name, [])
         if _spk_texts:
+            # embedding による意味的重複チェック
+            if _EMB_AVAILABLE:
+                _spk_best_emb = max((_emb_similarity(reply, _r) for _r in _spk_texts), default=0.0)
+                if _spk_best_emb >= 0.75:
+                    ng_score += 0.6
+                    reasons.append(f"同キャラ直近発言と意味的にほぼ同内容（embedding={_spk_best_emb:.2f}）")
+                elif _spk_best_emb >= 0.60:
+                    ng_score += 0.4
+                    reasons.append(f"同キャラ直近発言と内容が近い（embedding={_spk_best_emb:.2f}）")
+            # kanji-ngram による表層重複チェック
             _reply_ng = _kanji_ngrams(reply)
             for _ref in _spk_texts:
                 _shared = _reply_ng & _kanji_ngrams(_ref)
                 if len(_shared) >= 3:
                     _sample = list(_shared)[:2]
-                    ng_score += 0.5
+                    ng_score += 0.6  # 0.5 → 0.6（単独でNGを確定させる）
                     reasons.append(f"同キャラ直近発言と語句重複（{'・'.join(_sample)}）")
                     break
 

@@ -209,7 +209,7 @@ def call_hermes_agent_chat(messages: list, profile: str = "lmstudio-char", timeo
         else:
             raise
 
-    m_mood = re.match(r"^\[MOOD:([^\]]+)\]\s*", output)
+    m_mood = re.match(r"^\[MOOD:([^\]]+)\]\s*", output, re.IGNORECASE)
     mood = m_mood.group(1).lower() if m_mood else None
     return normalize_model_output(output), mood
 
@@ -222,7 +222,7 @@ def call_char_chat(char_info: dict, messages: list, base_url: str, model: str,
         profile = char_info.get("hermes_profile", "lmstudio-char")
         return call_hermes_agent_chat(messages, profile=profile, timeout=timeout)
     raw = call_lmstudio_chat_messages(base_url, model, messages, temperature, max_tokens, timeout)
-    m = re.match(r"^\[MOOD:([^\]]+)\]\s*", raw)
+    m = re.match(r"^\[MOOD:([^\]]+)\]\s*", raw, re.IGNORECASE)
     mood = m.group(1).lower() if m else None
     text = raw[m.end():] if m else raw
     return text, mood
@@ -329,7 +329,7 @@ def normalize_model_output(text: str) -> str:
         return text
     text = text.replace("<br/>", "\n").replace("<br>", "\n").replace("&nbsp;", " ")
     text = re.sub(r"^#+\s+", "", text, flags=re.MULTILINE)  # Markdown見出し除去
-    text = re.sub(r"\[MOOD:[^\]]+\]\s*", "", text)
+    text = re.sub(r"\[MOOD:[^\]]+\]\s*", "", text, flags=re.IGNORECASE)
     # （話題提供）がLLMにechoされた場合は除去
     text = re.sub(r"[（(]話題提供[）)]\s*", "", text)
     text = re.sub(r"[（(]再生成[）)]\s*", "", text)

@@ -800,11 +800,29 @@ with tab_auto:
                             director_status=(_director_adv.status if _director_adv else ""),
                         )
                         if _is_ng:
-                            _dbg = f"🛡 Guardrail [{_cname}] score={_ng_score} {_ng_reasons} (再生成スキップ)"
+                            _dbg = f"🛡 Guardrail [{_cname}] score={_ng_score} {_ng_reasons}"
                             st.session_state["topic_debug_log"] = (
                                 [_dbg] + st.session_state.get("topic_debug_log", [])
                             )[:20]
-                            # 再生成はスキップして初回返答をそのまま使用（速度優先）
+                            # 同キャラ直近発言との繰り返しのみ1回再生成（他はスキップ）
+                            _is_repeat_ng = any("同キャラ" in r for r in _ng_reasons)
+                            if _is_repeat_ng and not speaker.get("is_noah") and not speaker.get("is_hermes_agent"):
+                                _retry_instr = build_retry_instruction(
+                                    _ng_reasons, _conv_state, shared_words=_shared_words
+                                )
+                                _msgs_retry = _msgs + [{"role": "user", "content": _retry_instr}]
+                                try:
+                                    _reply2_raw, _mood_val2 = call_char_chat(
+                                        speaker, _msgs_retry, _base_url, _model,
+                                        _temperature, _max_tokens, timeout=180,
+                                    )
+                                    _reply2 = normalize_model_output(_reply2_raw)
+                                    if _reply2 and len(_reply2) >= 5:
+                                        _reply = _reply2
+                                        if _mood_val2:
+                                            _mood_val = _mood_val2
+                                except Exception:
+                                    pass
                     # Phase 2.7: FinalReplySanitizer
                     if _reply:
                         _prev_entry = _log[-1] if _log else {}

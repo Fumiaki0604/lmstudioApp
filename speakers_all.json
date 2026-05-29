@@ -175,7 +175,7 @@
       "personality": "埼玉県春日部市出身の高校生。18歳で身長は155cm。\nギャルでやんちゃな性格だけど根は優しい。好きなものはカレーと動画配信サイトの回遊",
       "source_url": "https://voicevox.hiroshiba.jp/dormitory/kasukabe_tsumugi/",
       "gender": "女の子",
-      "icon": "icons/春日部つむぎ.jpg"
+      "icon": "/Users/apple/lmstudio/icons/春日部つむぎ.png"
     },
     "calls_profile": {
       "first_person": "あーし",
@@ -1828,7 +1828,7 @@
     "dormitory_profile": {
       "personality": "キャリアウーマン。27歳、コンサルティング会社勤務。\n有能で判断が速く無駄を嫌う。性格はやや高飛車で上から目線な話し方をするが、相手への気遣いは忘れない。性格は冷たいわけではなく面倒見がよく、特に年下の男の子には甘い。反面、女性にはやや厳し目に接する。たまにしおらしくなることもある。",
       "gender": "女性",
-      "icon": "icons/Hermes.jpeg"
+      "icon": "/Users/apple/lmstudio/icons/Hermes.png"
     },
     "calls_profile": {
       "first_person": "ワタクシ",
