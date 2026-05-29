@@ -127,7 +127,25 @@ DirectorAdvice は MovePlanner への**命令ではなく重み付け**として
 
 ---
 
-### 5. URL参照機能
+### 5. HuggingFace Embedding（Phase HF-min）
+
+`embedding.py` が日本語テキストの意味的類似度を計算する。
+
+- **モデル**: [`pkshatech/GLuCoSE-base-ja`](https://huggingface.co/pkshatech/GLuCoSE-base-ja)（~440MB、768次元、日本語特化）
+- **用途**: キーワードマッチでは捉えられない同義表現を意味レベルで検出
+- **適用箇所**:
+  - `_related_to_event`: 発言とイベントの関連度（ReopenGuard用）
+  - `RecentSimilarityGuard`: 直前発話との意味的重複チェック（閾値 0.75/0.60）
+- **キャッシュ**: 最大500件をメモリに保持（LRU的に半分削除）
+- **フォールバック**: モデルロード失敗時は従来のJaccard類似度に自動切替
+
+```bash
+pip install sentence-transformers sentencepiece
+```
+
+---
+
+### 6. URL参照機能
 
 会話中にURLが出現すると、バックグラウンドでfetch + LLM要約（trafilatura + LM Studio）を実行し、次のターン以降のシステムプロンプトに `【参照ページ要約】` として注入する。
 
@@ -135,6 +153,7 @@ DirectorAdvice は MovePlanner への**命令ではなく重み付け**として
 
 ### 6. その他
 
+- **モデル**: Qwen3-14B GGUF Q4_K_M（LM Studio、コンテキスト長8192、全レイヤーGPUオフロード）
 - **LM Studio 競合対策**: セマフォで同時発言を直列化。note生成中はバックグラウンドをスキップ
 - **メンションハイライト**: `@呼び名`（あだ名含む）を青ハイライト表示
 - **アイコン管理**: 表示時は常に最新の speaker_data を参照。アップロード時に 256×256 にリサイズ
@@ -162,7 +181,7 @@ DirectorAdvice は MovePlanner への**命令ではなく重み付け**として
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-pip install streamlit requests trafilatura twikit pyautogen pillow
+pip install streamlit requests trafilatura twikit pyautogen pillow sentence-transformers sentencepiece
 ```
 
 ### 必要なサービス
@@ -186,6 +205,7 @@ streamlit run app.py --server.port 8502
 ```
 app.py                      メインアプリ（全タブ）
 conversation_controller.py  ConversationState / MovePlanner / OutputGuardrail / FinalReplySanitizer
+embedding.py                HuggingFace embeddingユーティリティ（GLuCoSE-base-ja・キャッシュ付き）
 hermes_director.py          Hermes Director（Phase H1）
 event_memory.py             TimeContext / EventMemory / EventResolver
 chat.py                     LLM呼び出し・セマフォ管理・URL fetch
