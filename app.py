@@ -67,7 +67,6 @@ from conversation_controller import (
 from hermes_director import run_hermes_director, should_call_director, DirectorAdvice
 from event_memory import (
     TimeContext,
-    load_candidates, save_candidates,
     load_events, save_events,
     load_resolved, save_resolved,
     resolve_events, update_event_candidates, update_preparation_mentions,
@@ -105,7 +104,7 @@ TTS_QUEUE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _do_tts_synthesis(text: str, speaker_id: int, timestamp: str, tts_mode: str, api_key: str, auto_state: dict):
-    """バックグラウンドでTTS合成しTTS_QUEUE_DIRに保存する。ts_mapにts_safe→timestampの対応を記録。"""
+    """バックグラウンドでTTS合成しTTS_QUEUE_DIRに保存する。"""
     clean = strip_urls_for_tts(text)
     ts_safe = timestamp.replace(":", "-").replace("+", "p").replace(".", "_")
     try:
@@ -163,7 +162,8 @@ def current_buddy_prompt() -> str:
 # Settings
 # =============================
 def _default_settings():
-    return {"tts_api_key": "", "tts_mode": "cloud", "rss_feeds": DEFAULT_RSS_FEEDS.copy(), "note_cookie": ""}
+    return {"tts_api_key": "", "tts_mode": "cloud", "rss_feeds": DEFAULT_RSS_FEEDS.copy(), "note_cookie": "",
+            "max_chars": 4000, "max_tokens": 800, "temperature": 0.3}
 
 
 def load_settings() -> dict:
@@ -272,13 +272,13 @@ except Exception as e:
 elapsed = int((time.time() - t0) * 1000)
 checked_at = datetime.now().strftime("%H:%M:%S")
 
-# 生成設定のデフォルト値
+# 生成設定のデフォルト値（設定ファイルから復元）
 if "max_chars" not in st.session_state:
-    st.session_state["max_chars"] = 4000
+    st.session_state["max_chars"] = st.session_state.get("app_settings", {}).get("max_chars", 4000)
 if "max_tokens" not in st.session_state:
-    st.session_state["max_tokens"] = 800
+    st.session_state["max_tokens"] = st.session_state.get("app_settings", {}).get("max_tokens", 800)
 if "temperature" not in st.session_state:
-    st.session_state["temperature"] = 0.3
+    st.session_state["temperature"] = st.session_state.get("app_settings", {}).get("temperature", 0.3)
 if "auto_running" not in st.session_state:
     st.session_state["auto_running"] = False
 if "topic_change_cooldown" not in st.session_state:
@@ -607,7 +607,8 @@ with tab_auto:
         _all_names = [c["name"] for c in auto_all_chars]
 
         # 自律発言生成（バックグラウンドスレッド）
-        if st.session_state["auto_running"] and not _auto_state["generating"] and time.time() >= st.session_state["auto_next_time"]:
+        _audio_ready_at = _auto_state.get("audio_ready_at", 0)
+        if st.session_state["auto_running"] and not _auto_state["generating"] and time.time() >= st.session_state["auto_next_time"] and time.time() >= _audio_ready_at:
             import random
 
             def _auto_gen_thread(speaker, all_chars, b_url, mdl, mention_from=None):
@@ -622,7 +623,6 @@ with tab_auto:
                     _others = [c["name"] for c in all_chars if c["name"] != _cname]
                     _log = _auto_load_log()
                     # Phase 3: EventMemory 読み込み
-                    _em_candidates = load_candidates()
                     _em_events = load_events()
                     _em_resolved = load_resolved()
                     _recent = _log[-3:]
@@ -662,29 +662,25 @@ with tab_auto:
                         _topic_instr = "\n会話が一段落したと感じたら新しい話題を振ってもいい。"
                     # ConversationController: conv_state は Phase 1/2 共通で計算
                     _conv_state = update_conv_state(_log) if not mention_from else None
-                    # Phase H1: Hermes Director（条件付き・バックグラウンドで取得済みのadviceを使用）
+                    _now = datetime.now(ZoneInfo("Asia/Tokyo"))
+                    # Phase H1: Hermes Director（バックグラウンド非同期化・前回adviceを即時使用）
                     _turn_count = st.session_state.get("auto_turn_count", 0)
-                    _director_adv = st.session_state.get("director_advice")
+                    _director_adv = _auto_state.get("director_advice") or st.session_state.get("director_advice")
                     if _conv_state and should_call_director(_turn_count, _conv_state):
-                        try:
-                            _new_adv = run_hermes_director(
-                                _conv_state, _log, _em_events, _now, timeout=40
-                            )
-                            if _new_adv:
-                                st.session_state["director_advice"] = _new_adv
-                                _director_adv = _new_adv
-                                _dbg = f"🎬 Director [{_new_adv.status}] {_new_adv.problem[:40]} conf={_new_adv.confidence}"
-                                st.session_state["topic_debug_log"] = (
-                                    [_dbg] + st.session_state.get("topic_debug_log", [])
-                                )[:20]
-                                # H2: event_action を EventMemory に即時反映
-                                _em_events, _ev_modified = apply_director_event_action(
-                                    _new_adv, _em_events, _now
+                        def _run_director_bg(_conv_state=_conv_state, _log=_log,
+                                             _em_events=_em_events, _now=_now):
+                            try:
+                                _new_adv = run_hermes_director(
+                                    _conv_state, _log, _em_events, _now, timeout=40
                                 )
-                                if _ev_modified:
-                                    save_events(_em_events)
-                        except Exception:
-                            pass
+                                if _new_adv:
+                                    _auto_state["director_advice"] = _new_adv
+                                    _em_ev2, _ev_mod = apply_director_event_action(_new_adv, _em_events, _now)
+                                    if _ev_mod:
+                                        save_events(_em_ev2)
+                            except Exception:
+                                pass
+                        threading.Thread(target=_run_director_bg, daemon=True).start()
                     st.session_state["auto_turn_count"] = _turn_count + 1
                     _selected_move = ""
                     if _conv_state and random.random() < CONTROL_RATE:
@@ -709,7 +705,6 @@ with tab_auto:
                             _other_fp_lines.append(f"  「{oc_fp}」= {oc['name']} の一人称（名詞ではない）")
                             _other_fps_dict[oc["name"]] = oc_fp
                     _other_fp_block = "\n【他キャラの一人称（固有名詞と混同しないこと）】\n" + "\n".join(_other_fp_lines) if _other_fp_lines else ""
-                    _now = datetime.now(ZoneInfo("Asia/Tokyo"))
                     if _conv_state and _em_events:
                         _conv_state.decided_event_hint = get_decided_event_hint(_em_events, _now)
                     _hour = _now.hour
@@ -761,6 +756,7 @@ with tab_auto:
 - 自分も他のキャラクターも「AI」「プログラム」「キャラクター」ではなく、全員が生身の人間として存在している。AIという概念を会話に持ち込まない
 - 直近の会話履歴の発言者を正確に把握すること。「◯◯が言った」と言う場合は、必ず履歴の該当行の名前を確認し、別のキャラクターの発言と混同しない
 - 直前の他キャラの発言と同じ内容・同じ言い回しを繰り返さない。似た意見でも別の角度・言葉で表現する{f'（直前の発言: 「{_log[-1]["text"][:40]}」）' if _log else ''}
+{("- 他キャラへの呼び方は必ず以下を使う: " + "、".join(f"{n}→「{_char_nicknames[n]}」" for n in _others if n in _char_nicknames)) if _char_nicknames else ""}
 【最重要: 一人称】あなたは「{_cname}」です。一人称は「{_fp if _fp else "私"}」のみ。{f"「{'」「'.join(fp for fp in _other_fps_dict.values() if fp in DISTINCTIVE_FPS)}」は他キャラの一人称なので絶対に使わない。" if any(fp in DISTINCTIVE_FPS for fp in _other_fps_dict.values()) else ""}
 【厳守】発言テキストのみ出力。キャラ名ラベル（「{_cname}:」等）・他キャラの発言は一切書かない。{_mood_instr}"""
                     _msgs = [
@@ -769,16 +765,16 @@ with tab_auto:
                     ]
                     _mood_val = None
                     if speaker.get("is_noah"):
-                        _reply, _mood_val = call_noah_chat(_msgs, timeout=120)
+                        _reply, _mood_val = call_noah_chat(_msgs, timeout=20)
                     elif speaker.get("is_hermes_agent"):
                         _reply, _mood_val = call_hermes_agent_chat(
                             _msgs,
                             profile=speaker.get("hermes_profile", "lmstudio-char"),
-                            timeout=180,
+                            timeout=60,
                             include_mood=_has_mood,
                         )
                     else:
-                        _raw = call_lmstudio_chat_messages(b_url, mdl, _msgs, 0.8, 150, timeout=120, background=True)
+                        _raw = call_lmstudio_chat_messages(b_url, mdl, _msgs, 0.8, 150, timeout=30, background=True)
                         _mm = re.match(r"^\[MOOD:([^\]]+)\]\s*", _raw) or re.match(r"^\[(\w+)\]\s*", _raw)
                         if _mm:
                             _mood_val = _mm.group(1).lower()
@@ -804,40 +800,11 @@ with tab_auto:
                             director_status=(_director_adv.status if _director_adv else ""),
                         )
                         if _is_ng:
-                            _dbg = f"🛡 Guardrail [{_cname}] score={_ng_score} {_ng_reasons}"
+                            _dbg = f"🛡 Guardrail [{_cname}] score={_ng_score} {_ng_reasons} (再生成スキップ)"
                             st.session_state["topic_debug_log"] = (
                                 [_dbg] + st.session_state.get("topic_debug_log", [])
                             )[:20]
-                            _retry_instr = build_retry_instruction(
-                                _ng_reasons, _conv_state, shared_words=_shared_words
-                            )
-                            _msgs_retry = _msgs + [
-                                {"role": "user", "content": _retry_instr},
-                            ]
-                            try:
-                                if speaker.get("is_noah"):
-                                    _reply2, _mood_val2 = call_noah_chat(_msgs_retry, timeout=120)
-                                elif speaker.get("is_hermes_agent"):
-                                    _reply2, _mood_val2 = call_hermes_agent_chat(
-                                        _msgs_retry,
-                                        profile=speaker.get("hermes_profile", "lmstudio-char"),
-                                        timeout=180,
-                                        include_mood=_has_mood,
-                                    )
-                                else:
-                                    _raw2 = call_lmstudio_chat_messages(b_url, mdl, _msgs_retry, 0.8, 150, timeout=120, background=True)
-                                    _mm2 = re.match(r"^\[MOOD:([^\]]+)\]\s*", _raw2) or re.match(r"^\[(\w+)\]\s*", _raw2)
-                                    if _mm2:
-                                        _mood_val2 = _mm2.group(1).lower()
-                                        _raw2 = _raw2[_mm2.end():]
-                                    _reply2, _mood_val2 = _raw2, _mood_val
-                                _reply2 = re.sub(rf"(?<!\w){re.escape(_cname)}[:：]\s*", "", _reply2)
-                                _reply2 = normalize_model_output(_reply2)
-                                if _reply2:
-                                    _reply = _reply2
-                                    _mood_val = _mood_val2
-                            except Exception:
-                                pass  # 失敗したら初回の _reply をそのまま使う
+                            # 再生成はスキップして初回返答をそのまま使用（速度優先）
                     # Phase 2.7: FinalReplySanitizer
                     if _reply:
                         _prev_entry = _log[-1] if _log else {}
@@ -859,27 +826,8 @@ with tab_auto:
                             if any("途中" in r for r in _san_reasons):
                                 _fixed = _truncate_at_last_sentence(_reply)
                                 _reply = _fixed if _fixed else get_char_fallback(_cname)
-                            elif not speaker.get("is_noah") and not speaker.get("is_hermes_agent"):
-                                # LM Studio キャラ: fallback前に1回再生成を試みる
-                                try:
-                                    _raw_s2 = call_lmstudio_chat_messages(
-                                        b_url, mdl, _msgs, 0.9, 150, timeout=90, background=True
-                                    )
-                                    _mm_s2 = re.match(r"^\[MOOD:([^\]]+)\]\s*", _raw_s2) or re.match(r"^\[(\w+)\]\s*", _raw_s2)
-                                    if _mm_s2:
-                                        _mood_val = _mm_s2.group(1).lower()
-                                        _raw_s2 = _raw_s2[_mm_s2.end():]
-                                    _raw_s2 = re.sub(rf"(?<!\w){re.escape(_cname)}[:：]\s*", "", _raw_s2)
-                                    _raw_s2 = normalize_model_output(_raw_s2)
-                                    _san_ng2, _, _ = sanitize_reply(
-                                        _raw_s2, speaker_name=_cname, own_fp=_fp,
-                                        prev_speaker_text=_prev_entry.get("text", ""),
-                                        prev_speaker_fp=_prev_spk_fp,
-                                    )
-                                    _reply = _raw_s2 if (_raw_s2 and not _san_ng2) else get_char_fallback(_cname)
-                                except Exception:
-                                    _reply = get_char_fallback(_cname)
                             else:
+                                # 再生成スキップ（速度優先）: fallback直接適用
                                 _reply = get_char_fallback(_cname)
                     # MOOD対応: 複数スタイル持ちはMOODで speaker_id を切り替え
                     _tts_id = _speaker_from_mood(_mood_val, _char_styles, _spk_id) if _has_mood else _spk_id
@@ -896,6 +844,9 @@ with tab_auto:
                         _auto_save_log(_log)
                         # TTS: バックグラウンドで即時合成してキューに積む
                         if _auto_state.get("tts_enabled"):
+                            # 音声再生終了推定時刻を計算（合成10s + 再生 len/5 s）
+                            _audio_sec = max(10, len(_reply) // 5) + 10
+                            _auto_state["audio_ready_at"] = time.time() + _audio_sec
                             threading.Thread(
                                 target=_do_tts_synthesis,
                                 args=(_reply, _tts_id, _now.isoformat(),
@@ -912,23 +863,10 @@ with tab_auto:
                                     args=(_url, b_url, mdl),
                                     daemon=True,
                                 ).start()
-                        # Phase 3: EventIntentClassifier + EventResolver (post-save)
+                        # Phase 3: EventMemory（LLM呼び出しなしの部分のみ実行）
                         try:
-                            _recent_ctx = "\n".join(
-                                f"【{m['name']}】{m['text']}" for m in _log[-3:]
-                            )
-                            _clf = classify_event_intent(_reply, _cname, _recent_ctx, b_url, mdl)
-                            _em_candidates, _em_events = update_event_candidates(
-                                _clf, _reply, _cname, _now, _em_candidates, _em_events
-                            )
                             _em_events = update_preparation_mentions(_reply, _em_events)
-                            _em_events, _em_resolved_new = resolve_events(
-                                _em_events, _em_resolved, _now, b_url, mdl
-                            )
-                            save_candidates(_em_candidates)
                             save_events(_em_events)
-                            if len(_em_resolved_new) != len(_em_resolved):
-                                save_resolved(_em_resolved_new)
                         except Exception:
                             pass
                         # 10ターンごとに各キャラの記憶に書き戻す
@@ -965,11 +903,15 @@ with tab_auto:
                             _nickname_to_name[_alias] = _target
                 _mentioned_name = _detect_mention(_last_entry["text"], _all_names, _nickname_to_name)
                 if _mentioned_name and _mentioned_name != _last_entry["name"]:
-                    _next_speaker = next((c for c in auto_all_chars if c["name"] == _mentioned_name), None)
-                    if _next_speaker:
-                        _mention_from = _last_entry["name"]
-                        # メンション返答は短めのインターバル
-                        st.session_state["auto_next_time"] = time.time() + random.randint(10, 20)
+                    # 直近4件が2名のみで占められている場合はメンションを無視して別キャラへ
+                    _recent4_names = list({e["name"] for e in _prev_log[-4:]}) if len(_prev_log) >= 4 else []
+                    _mention_loop = len(_recent4_names) <= 2 and len(auto_all_chars) > 2
+                    if not _mention_loop:
+                        _next_speaker = next((c for c in auto_all_chars if c["name"] == _mentioned_name), None)
+                        if _next_speaker:
+                            _mention_from = _last_entry["name"]
+                            # メンション返答は短めのインターバル
+                            st.session_state["auto_next_time"] = time.time() + random.randint(10, 20)
             if _next_speaker is None:
                 # same_speaker_guard: 直近3件中2件以上同じ話者は次回候補から除外
                 _recent_names = [e["name"] for e in _prev_log[-3:]] if _prev_log else []
@@ -981,7 +923,7 @@ with tab_auto:
                 if not _sp_candidates:
                     _sp_candidates = auto_all_chars
                 _next_speaker = random.choice(_sp_candidates)
-                st.session_state["auto_next_time"] = time.time() + random.randint(30, 90)
+                st.session_state["auto_next_time"] = time.time() + random.randint(10, 30)
             _auto_state["generating"] = True
             _t = threading.Thread(
                 target=_auto_gen_thread,
@@ -1369,6 +1311,14 @@ with tab_settings:
     new_temperature = st.slider("Temperature", 0.0, 1.5, st.session_state["temperature"], 0.1)
     if new_temperature != st.session_state["temperature"]:
         st.session_state["temperature"] = new_temperature
+
+    if st.button("💾 生成設定を保存"):
+        _s = st.session_state.get("app_settings", {})
+        _s["max_chars"] = st.session_state["max_chars"]
+        _s["max_tokens"] = st.session_state["max_tokens"]
+        _s["temperature"] = st.session_state["temperature"]
+        save_settings(_s)
+        st.success("保存しました")
 
     st.divider()
     st.subheader("🔑 API設定")

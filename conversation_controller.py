@@ -4,6 +4,13 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
+try:
+    from embedding import text_similarity as _emb_similarity
+    _EMB_AVAILABLE = True
+except Exception:
+    _EMB_AVAILABLE = False
+    def _emb_similarity(a, b): return 0.0
+
 CONTROL_RATE = 0.75
 
 HOOK_PATTERNS = [
@@ -450,10 +457,16 @@ def build_move_instruction(move: str, state: ConversationState) -> str:
 
 
 def _related_to_event(reply: str, event) -> float:
-    """reply とイベントタイトル/aliases の Jaccard 類似度を返す（reopen_guard 用）。"""
+    """reply とイベントタイトル/aliases の関連度を返す（reopen_guard 用）。
+    embeddingが使えればコサイン類似度、使えなければJaccard。
+    """
     title = getattr(event, "title", "") or ""
     aliases = getattr(event, "aliases", []) or []
-    event_words = set(re.findall(r"[一-鿿ぁ-ゟ]{2,}", title + " " + " ".join(aliases)))
+    event_text = title + " " + " ".join(aliases)
+    if _EMB_AVAILABLE and reply and event_text.strip():
+        return _emb_similarity(reply, event_text)
+    # fallback: Jaccard
+    event_words = set(re.findall(r"[一-鿿ぁ-ゟ]{2,}", event_text))
     reply_words = set(re.findall(r"[一-鿿ぁ-ゟ]{2,}", reply))
     if not event_words or not reply_words:
         return 0.0
@@ -537,11 +550,12 @@ def check_output(reply: str, state: ConversationState,
             ng_score += 0.3
             reasons.append("汎用質問（「どう思う？」系・選択肢なし）")
 
-    # ── 7. RecentSimilarityGuard（Phase 2.6） ────────────────────────────
+    # ── 7. RecentSimilarityGuard（Phase 2.6 + embedding） ───────────────────
     # short_reaction は類似度チェックを緩める
     if move_type != "short_reaction" and state.recent_full_texts and reply_words:
         best_shared: set = set()
         best_jaccard = 0.0
+        best_emb = 0.0
         for text in state.recent_full_texts:
             other_words = _extract_content_words(text)
             j = _jaccard(reply_words, other_words)
@@ -549,11 +563,22 @@ def check_output(reply: str, state: ConversationState,
             if j > best_jaccard or len(s) > len(best_shared):
                 best_jaccard = j
                 best_shared = s
+            if _EMB_AVAILABLE:
+                e = _emb_similarity(reply, text)
+                if e > best_emb:
+                    best_emb = e
 
         shared_words = list(best_shared)
         shared_count = len(best_shared)
+        # embedding が高い（>=0.75）= 意味的に同じ内容
+        if _EMB_AVAILABLE and best_emb >= 0.75:
+            ng_score += 0.6
+            reasons.append(f"直前発話と意味的にほぼ同内容（embedding={best_emb:.2f}）")
+        elif _EMB_AVAILABLE and best_emb >= 0.60 and shared_count >= 2:
+            ng_score += 0.4
+            reasons.append(f"直前発話と内容が近い（embedding={best_emb:.2f}）")
         # 共有語 >= 5 はクローン（単独NG水準）、3-4 語 + Jaccard は組み合わせで判定
-        if shared_count >= 5:
+        elif shared_count >= 5:
             ng_score += 0.6
             reasons.append(f"直前発話とほぼ同内容（共有語: {'・'.join(shared_words[:4])}）")
         elif shared_count >= 4:

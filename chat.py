@@ -68,6 +68,17 @@ def call_lmstudio_chat_messages(base_url, model, messages, temperature, max_toke
         if background and _priority_request.is_set():
             raise TimeoutError("priority request in progress, skipping background task")
         endpoint = base_url.rstrip("/") + "/chat/completions"
+        # Qwen3系はThinkingモードを /no_think で無効化（GGUF版チャットテンプレート対応）
+        if "qwen3" in model.lower():
+            msgs = list(messages)
+            for i, m in enumerate(msgs):
+                if m.get("role") == "system":
+                    if not m["content"].startswith("/no_think"):
+                        msgs[i] = {**m, "content": "/no_think\n" + m["content"]}
+                    break
+            else:
+                msgs.insert(0, {"role": "system", "content": "/no_think"})
+            messages = msgs
         payload = {
             "model": model,
             "messages": messages,
@@ -79,8 +90,11 @@ def call_lmstudio_chat_messages(base_url, model, messages, temperature, max_toke
         if not r.ok:
             raise requests.HTTPError(f"{r.status_code} {r.reason}: {r.text[:300]}", response=r)
         msg = r.json()["choices"][0]["message"]
-        # Qwen3等のThinkingモデルはcontentが空でreasoning_contentに本文が入る
-        return msg.get("content") or msg.get("reasoning_content") or ""
+        # Qwen3等のThinkingモデルはcontentが空でreasoning_contentに本文が入る場合がある
+        content = msg.get("content") or msg.get("reasoning_content") or ""
+        # <think>...</think> ブロックが残っていれば除去
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+        return content
     finally:
         _lmstudio_sem.release()
 
