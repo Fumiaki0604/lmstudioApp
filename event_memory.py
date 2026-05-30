@@ -9,6 +9,8 @@ from typing import Optional
 
 from chat import call_lmstudio_chat_messages
 
+# NLI は精度不足のためEventIntentClassifierには未使用（hf_models.pyに保持）
+
 _STORAGE_DIR = Path.home() / ".lmstudio_assistant" / "event_memory"
 
 _PREP_TERMS_EVENT = [

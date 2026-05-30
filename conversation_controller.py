@@ -11,6 +11,8 @@ except Exception:
     _EMB_AVAILABLE = False
     def _emb_similarity(a, b): return 0.0
 
+# cross-encoder は hf_models.py に保持（イベント関連度チェック等の将来用途）
+
 CONTROL_RATE = 0.75
 
 HOOK_PATTERNS = [

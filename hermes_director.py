@@ -8,6 +8,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+try:
+    import hf_models as _hf
+    _HF_AVAILABLE = True
+except Exception:
+    _HF_AVAILABLE = False
+    class _hf:
+        SENTIMENT_AVAILABLE = False
+        @staticmethod
+        def get_sentiment(text): return {"label": "NEUTRAL", "score": 1.0}
+
 _DIRECTOR_PROFILE = str(Path.home() / ".hermes" / "profiles" / "hermes-director")
 
 _PROMPT_TEMPLATE = """\
@@ -59,10 +69,19 @@ class DirectorAdvice:
 
 
 def _build_prompt(conv_state, recent_log: list, events: list, now: datetime) -> str:
-    log_lines = "\n".join(
-        f"【{e.get('name', '?')}】{e.get('text', '')[:60]}"
-        for e in recent_log[-8:]
-    )
+    # 直近8件を詳細表示
+    recent_8 = recent_log[-8:]
+    # 感情スコアを付加（SENTIMENT_AVAILABLE 時のみ）
+    def _fmt_entry(e: dict) -> str:
+        text = e.get("text", "")[:60]
+        if _hf.SENTIMENT_AVAILABLE:
+            s = _hf.get_sentiment(text)
+            label = {"POSITIVE": "😊", "NEGATIVE": "😞", "NEUTRAL": "😐"}.get(s["label"], "")
+            return f"【{e.get('name', '?')}】{label} {text}"
+        return f"【{e.get('name', '?')}】{text}"
+
+    log_lines = "\n".join(_fmt_entry(e) for e in recent_8)
+
     event_lines = "\n".join(
         f"・「{e.title}」({e.status}) {e.evidence[-1][:40] if e.evidence else ''}"
         for e in events[:5]
