@@ -79,6 +79,7 @@ class EventCandidate:
     mentions: int = 1
     time_hint: str = "unknown"
     participants: list = field(default_factory=list)
+    frequency: str = "one_time"    # one_time | occasional | recurring
 
 
 @dataclass
@@ -98,6 +99,7 @@ class EventMemory:
     decided_at: str = ""
     closed_until: str = ""         # この時刻まで準備相談の再開を禁止
     decisions_summary: str = ""    # 決定内容の自然文サマリ
+    frequency: str = "one_time"    # one_time | occasional | recurring
 
 
 @dataclass
@@ -122,7 +124,9 @@ def load_candidates() -> list:
     if not p.exists():
         return []
     try:
-        return [EventCandidate(**d) for d in json.loads(p.read_text(encoding="utf-8"))]
+        valid_fields = {f.name for f in EventCandidate.__dataclass_fields__.values()}
+        return [EventCandidate(**{k: v for k, v in d.items() if k in valid_fields})
+                for d in json.loads(p.read_text(encoding="utf-8"))]
     except Exception:
         return []
 
@@ -139,7 +143,9 @@ def load_events() -> list:
     if not p.exists():
         return []
     try:
-        return [EventMemory(**d) for d in json.loads(p.read_text(encoding="utf-8"))]
+        valid_fields = {f.name for f in EventMemory.__dataclass_fields__.values()}
+        return [EventMemory(**{k: v for k, v in d.items() if k in valid_fields})
+                for d in json.loads(p.read_text(encoding="utf-8"))]
     except Exception:
         return []
 
@@ -197,8 +203,14 @@ def classify_event_intent(reply: str, speaker: str, recent_context: str,
   "time_hint": "now | tonight | tomorrow | later | unknown",
   "participants": [],
   "should_resolve_later": true/false,
+  "frequency": "one_time | occasional | recurring",
   "reason": "短い理由"
-}}"""
+}}
+
+frequency の基準:
+- one_time: 一度やれば完了する（冷蔵庫の整理、部屋の片付け、特定の映画を見る、旅行など）
+- occasional: 不定期に繰り返す（月1回程度のイベント、季節行事など）
+- recurring: 毎日〜週数回起きる日常行為（食事、散歩、おしゃべり、料理一般など）"""
     try:
         raw = call_lmstudio_chat_messages(
             base_url, model,
@@ -247,6 +259,7 @@ def _promote_candidate(candidate: EventCandidate, candidates: list,
         last_seen_at=now_str,
         participants=list(candidate.participants),
         evidence=list(candidate.evidence_messages),
+        frequency=getattr(candidate, "frequency", "one_time"),
     ))
     return events, [c for c in candidates if c is not candidate]
 
@@ -284,6 +297,7 @@ def update_event_candidates(classification: dict, reply: str, speaker: str,
             last_seen_at=now_str,
             time_hint=classification.get("time_hint", "unknown"),
             participants=[speaker] if speaker else [],
+            frequency=classification.get("frequency", "one_time"),
         )
         candidates.append(matched)
 
@@ -411,7 +425,11 @@ def resolve_events(events: list, resolved: list, now: datetime,
             updated.append(event)
             continue
 
-        if elapsed_h >= 72:
+        freq = getattr(event, "frequency", "one_time")
+        # recurring イベントは時間経過で期限切れにしない（食事など）
+        expire_h = 72 if freq != "recurring" else 7 * 24  # recurring は1週間
+
+        if elapsed_h >= expire_h:
             event.status = "expired"
             event.outcome_summary = "数日前の話題のため準備中として扱わない。触れるなら思い出話か別話題への橋渡しにする。"
             new_resolved.append(ResolvedEvent(
@@ -424,6 +442,11 @@ def resolve_events(events: list, resolved: list, now: datetime,
                 event.status = "assumed_done"
                 if not event.outcome_summary:
                     event.outcome_summary = _generate_outcome(event, base_url, model)
+                # one_time イベントは assumed_done 到達で自動的に decided + 48h 封印
+                if freq == "one_time" and not event.closed_until:
+                    event.status = "decided"
+                    event.decided_at = now.isoformat()
+                    event.closed_until = (now + timedelta(hours=48)).isoformat()
             updated.append(event)
         elif elapsed_h >= 2:
             event.status = "maybe_done"
