@@ -13,6 +13,16 @@ from zoneinfo import ZoneInfo
 
 import requests
 import streamlit as st
+
+
+@st.cache_data(max_entries=50)
+def _load_icon_bytes(path: str) -> Optional[bytes]:
+    """アイコンをバイト列でキャッシュ（パス渡しによるURL エンコード問題を回避）。"""
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except Exception:
+        return None
 import streamlit.components.v1 as components
 from streamlit_js_eval import streamlit_js_eval
 from streamlit_autorefresh import st_autorefresh
@@ -976,8 +986,9 @@ with tab_auto:
                 icon_path = (_disp_spk_data.get(_entry_name, {}).get("icon") or entry.get("icon", ""))
                 col_icon, col_msg = st.columns([1.5, 10])
                 with col_icon:
-                    if icon_path and os.path.exists(icon_path):
-                        st.image(icon_path, width=60)
+                    _icon_bytes = _load_icon_bytes(icon_path) if icon_path else None
+                    if _icon_bytes:
+                        st.image(_icon_bytes, width=60)
                     else:
                         st.write("👤")
                 with col_msg:
@@ -1491,9 +1502,10 @@ with tab_settings:
         icon_col1, icon_col2 = st.columns([1, 3])
         with icon_col1:
             if current_icon and os.path.exists(current_icon):
-                try:
-                    st.image(current_icon, width=80)
-                except Exception:
+                _preview_bytes = _load_icon_bytes(current_icon)
+                if _preview_bytes:
+                    st.image(_preview_bytes, width=80)
+                else:
                     st.caption("⚠️ アイコン読込エラー")
             else:
                 st.caption("アイコン未設定")
