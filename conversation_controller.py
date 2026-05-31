@@ -54,6 +54,7 @@ MOVE_TYPES = [
     "next_day_followup",
     "resolve_future_plan",
     "close_for_sleep",
+    "time_gap_opening",
 ]
 
 MOVE_INSTRUCTIONS = {
@@ -106,6 +107,11 @@ MOVE_INSTRUCTIONS = {
         "すでに決まったことを1文でまとめ、次の話題に移るか、今できる小さい行動で閉じる。"
         "例：「じゃあ役割はこれで確定。続きは明日の失敗報告で」「決まったし、もう寝よ」"
         "「明日から頑張ろう」で終わらせない。"
+    ),
+    "time_gap_opening": (
+        "前回の会話から時間が経ったあとの最初の発言。"
+        "「久しぶり」「昨日どうだった？」「あれ結局どうなったの？」など、時間経過を自然に示す一言。"
+        "計画・準備の話は絶対に再開しない。過去のことは過去として聞くか、新話題に移る。"
     ),
     "close_for_sleep": (
         "眠気・就寝の流れを受けて会話を閉じる。"
@@ -230,9 +236,20 @@ class ConversationState:
     sleep_intent_count: int = 0                           # 直近5件での眠い/寝る系ワード数
     speaker_recent_texts: dict = field(default_factory=dict)  # {name: [text, ...]} 同キャラ重複検出用
     decided_event_hint: str = ""                           # app.pyから注入: decided event の禁止指示
+    elapsed_hours: float = 0.0                             # 前回ログからの経過時間（時間）
 
 
 def update_conv_state(log_entries: list) -> ConversationState:
+    from datetime import datetime as _dt
+    _elapsed_hours = 0.0
+    if log_entries:
+        _last_ts = log_entries[-1].get("timestamp", "")
+        if _last_ts:
+            try:
+                _elapsed_hours = (_dt.now() - _dt.fromisoformat(_last_ts)).total_seconds() / 3600
+            except (ValueError, TypeError):
+                pass
+
     recent = log_entries[-5:] if log_entries else []
 
     # --- topic terms ---
@@ -365,6 +382,7 @@ def update_conv_state(log_entries: list) -> ConversationState:
         future_plan_loop=future_plan_loop,
         sleep_intent_count=sleep_intent_count,
         speaker_recent_texts=speaker_recent_texts,
+        elapsed_hours=_elapsed_hours,
     )
 
 
@@ -372,6 +390,10 @@ class MovePlanner:
     def pick_move(self, state: ConversationState, last_move_types: list = None,
                   char_name: str = "", director_advice=None) -> str:
         last_moves = (last_move_types or [])[-3:]
+
+        # 時間空白が大きい場合は time_gap_opening を強制（最初の2ターン分）
+        if state.elapsed_hours >= 6 and "time_gap_opening" not in (last_move_types or []):
+            return "time_gap_opening"
 
         # ステージ別ベース pool
         if state.care_loop_score >= 0.6:
