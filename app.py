@@ -68,6 +68,7 @@ from speakers import (
     extract_soul_interests, detect_topic_repetition,
     load_episodes, format_episodes_for_prompt, save_episode,
 )
+from mindmap import build_mindmap_html
 from conversation_controller import (
     CONTROL_RATE, DISTINCTIVE_FPS,
     update_conv_state, MovePlanner, build_move_instruction,
@@ -463,6 +464,15 @@ def _do_noah_feedback(log_entries: list) -> str:
     return f"書き戻し完了: {', '.join(results)}" if results else "書き戻す内容なし"
 
 
+def _rebuild_mindmap(log_entries: list, events: list = None) -> None:
+    """バックグラウンドでマインドマップHTMLを再生成して _auto_state に保存。"""
+    try:
+        html = build_mindmap_html(log_entries, events or [])
+        _auto_state["mindmap_html"] = html
+    except Exception:
+        pass
+
+
 def _do_soul_updates(log_entries: list, all_chars: list, base_url: str, model: str) -> None:
     import re as _re
     last_10 = log_entries[-10:]
@@ -586,6 +596,7 @@ with tab_auto:
                 if _stop_log:
                     threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
                     threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
+                    threading.Thread(target=_rebuild_mindmap, args=(_stop_log, _em_events), daemon=True).start()
         with col_clear:
             if st.button("🗑 ログクリア"):
                 st.session_state["auto_log"] = []
@@ -913,6 +924,14 @@ with tab_auto:
                 finally:
                     _auto_state["generating"] = False
                     _auto_state["name"] = ""
+                    # 20ターンごとにマインドマップをバックグラウンド更新
+                    _cur_log_for_map = _auto_load_log()
+                    if _cur_log_for_map and len(_cur_log_for_map) % 20 == 0:
+                        threading.Thread(
+                            target=_rebuild_mindmap,
+                            args=(_cur_log_for_map, _em_events),
+                            daemon=True,
+                        ).start()
 
             # メンション検出: 直前の発言で @名前 があれば優先指名
             _prev_log = _auto_load_log()
@@ -1017,6 +1036,7 @@ with tab_auto:
                 if _stop_log:
                     threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
                     threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
+                    threading.Thread(target=_rebuild_mindmap, args=(_stop_log, _em_events), daemon=True).start()
 
         # TTS: 全WAVをキューに注入（再生順序はJS側が制御）
         # 表示はJSの_autoTtsNowPlayingを次のrenderで読み取って制御する
@@ -1065,6 +1085,20 @@ with tab_auto:
                     _wav_path.unlink()
                 except Exception:
                     pass
+
+        # 会話マップ
+        _mindmap_html = _auto_state.get("mindmap_html", "")
+        with st.expander("🗺️ 会話マップ", expanded=False):
+            if _mindmap_html:
+                st.components.v1.html(_mindmap_html, height=600, scrolling=True)
+            else:
+                st.caption("停止時または20ターンごとに自動生成されます。")
+                if st.button("今すぐ生成", key="mindmap_now"):
+                    _map_log = _auto_load_log()
+                    if _map_log:
+                        with st.spinner("生成中..."):
+                            _auto_state["mindmap_html"] = build_mindmap_html(_map_log, _em_events)
+                        st.rerun()
 
         if st.session_state["auto_running"]:
             remaining = max(0, int(st.session_state["auto_next_time"] - time.time()))
