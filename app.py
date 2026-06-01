@@ -464,10 +464,11 @@ def _do_noah_feedback(log_entries: list) -> str:
     return f"書き戻し完了: {', '.join(results)}" if results else "書き戻す内容なし"
 
 
-def _rebuild_mindmap(log_entries: list, events: list = None) -> None:
+def _rebuild_mindmap(log_entries: list) -> None:
     """バックグラウンドでマインドマップHTMLを再生成して _auto_state に保存。"""
     try:
-        html = build_mindmap_html(log_entries, events or [])
+        from event_memory import load_events as _load_ev
+        html = build_mindmap_html(log_entries, _load_ev())
         _auto_state["mindmap_html"] = html
     except Exception:
         pass
@@ -596,7 +597,7 @@ with tab_auto:
                 if _stop_log:
                     threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
                     threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
-                    threading.Thread(target=_rebuild_mindmap, args=(_stop_log, _em_events), daemon=True).start()
+                    threading.Thread(target=_rebuild_mindmap, args=(_stop_log,), daemon=True).start()
         with col_clear:
             if st.button("🗑 ログクリア"):
                 st.session_state["auto_log"] = []
@@ -929,7 +930,7 @@ with tab_auto:
                     if _cur_log_for_map and len(_cur_log_for_map) % 20 == 0:
                         threading.Thread(
                             target=_rebuild_mindmap,
-                            args=(_cur_log_for_map, _em_events),
+                            args=(_cur_log_for_map,),
                             daemon=True,
                         ).start()
 
@@ -1036,7 +1037,7 @@ with tab_auto:
                 if _stop_log:
                     threading.Thread(target=_do_noah_feedback, args=(_stop_log,), daemon=True).start()
                     threading.Thread(target=_do_soul_updates, args=(_stop_log, auto_all_chars, base_url, model), daemon=True).start()
-                    threading.Thread(target=_rebuild_mindmap, args=(_stop_log, _em_events), daemon=True).start()
+                    threading.Thread(target=_rebuild_mindmap, args=(_stop_log,), daemon=True).start()
 
         # TTS: 全WAVをキューに注入（再生順序はJS側が制御）
         # 表示はJSの_autoTtsNowPlayingを次のrenderで読み取って制御する
@@ -1097,7 +1098,7 @@ with tab_auto:
                     _map_log = _auto_load_log()
                     if _map_log:
                         with st.spinner("生成中..."):
-                            _auto_state["mindmap_html"] = build_mindmap_html(_map_log, _em_events)
+                            _rebuild_mindmap(_map_log)
                         st.rerun()
 
         if st.session_state["auto_running"]:
