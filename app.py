@@ -1090,16 +1090,16 @@ with tab_auto:
         # 会話マップ
         _mindmap_html = _auto_state.get("mindmap_html", "")
         with st.expander("🗺️ 会話マップ", expanded=False):
+            if st.button("🔄 マップ更新", key="mindmap_now"):
+                _map_log = _auto_load_log()
+                if _map_log:
+                    with st.spinner("生成中..."):
+                        _rebuild_mindmap(_map_log)
+                    _mindmap_html = _auto_state.get("mindmap_html", "")
             if _mindmap_html:
                 st.components.v1.html(_mindmap_html, height=600, scrolling=True)
             else:
-                st.caption("停止時または20ターンごとに自動生成されます。")
-                if st.button("今すぐ生成", key="mindmap_now"):
-                    _map_log = _auto_load_log()
-                    if _map_log:
-                        with st.spinner("生成中..."):
-                            _rebuild_mindmap(_map_log)
-                        st.rerun()
+                st.caption("「マップ更新」または停止時・20ターンごとに自動生成されます。")
 
         if st.session_state["auto_running"]:
             remaining = max(0, int(st.session_state["auto_next_time"] - time.time()))

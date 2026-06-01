@@ -148,7 +148,8 @@ def build_mindmap_html(log_entries: list,
         return ""
 
     net = Network(height="580px", width="100%", directed=True,
-                  bgcolor="#0e1117", font_color="white")
+                  bgcolor="#0e1117", font_color="white",
+                  cdn_resources="in_line")
     net.set_options("""{
       "layout": {
         "hierarchical": {
