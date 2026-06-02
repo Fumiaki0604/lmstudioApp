@@ -173,12 +173,11 @@ def build_mindmap_image(log_entries: list,
         for seg in segments:
             color = _PALETTE[seg.index % len(_PALETTE)]
             seg_id = f"seg_{seg.index}"
-            nodes.append((seg_id, seg.label, 1, color, "ellipse"))
+            # セグメントラベルに主要話者を括弧で付加
+            spk_note = f"（{' '.join(seg.speakers[:3])}）" if seg.speakers else ""
+            seg_label = seg.label + "\n" + spk_note if spk_note else seg.label
+            nodes.append((seg_id, seg_label, 1, color, "ellipse"))
             edges.append((ROOT, seg_id, color))
-            for spk in seg.speakers:
-                spk_id = f"spk_{seg.index}_{spk}"
-                nodes.append((spk_id, spk, 2, color, "dot"))
-                edges.append((seg_id, spk_id, color))
 
         for ev in events:
             si = _find_segment_for_event(ev, segments, log_entries, offset)
