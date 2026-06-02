@@ -128,7 +128,7 @@ CHAR_MOVE_BIAS: dict = {
     "四国めたん":  ["summarize_and_close", "ask", "calm_reframe", "reflect_on_event", "resolve_future_plan", "close_for_sleep"],
     "中国うさぎ":  ["observe", "bridge", "soft_punchline", "imagine_risk"],
     "Noah":       ["observe", "bridge", "soft_punchline", "reflect_on_event", "mark_event_expired", "resolve_future_plan", "close_for_sleep"],
-    "Hermes":     ["reframe", "specific_question", "introduce_conflict", "resolve_future_plan"],
+    "Hermes":     ["resolve_future_plan", "summarize_and_close", "reframe", "soft_punchline", "mark_event_expired"],
     "雨晴はう":   ["shift", "bring_new_detail", "invite_other"],
     "春日部つむぎ": ["bring_new_detail", "tease", "short_reaction", "process_risk"],
     "WhiteCUL":   ["reframe", "ask", "soft_punchline"],
@@ -235,6 +235,7 @@ class ConversationState:
     future_plan_loop: bool = False                         # 「明日やろう/準備」が3回以上連続
     sleep_intent_count: int = 0                           # 直近5件での眠い/寝る系ワード数
     speaker_recent_texts: dict = field(default_factory=dict)  # {name: [text, ...]} 同キャラ重複検出用
+    pair_pingpong: tuple = ()                             # 往復ループ中のペア (A, B) or ()
     decided_event_hint: str = ""                           # app.pyから注入: decided event の禁止指示
     elapsed_hours: float = 0.0                             # 前回ログからの経過時間（時間）
 
@@ -341,6 +342,16 @@ def update_conv_state(log_entries: list) -> ConversationState:
     # --- 直近3件の全文（Jaccard用） ---
     recent_full_texts = [e["text"] for e in recent[-3:]]
 
+    # --- pair_pingpong 検出（直近6件で同じ2人が交互に往復） ---
+    _pair_pingpong: tuple = ()
+    if len(log_entries) >= 6:
+        _names6 = [e.get("name", "") for e in log_entries[-6:] if e.get("name")]
+        if len(set(_names6)) == 2 and len(_names6) >= 4:
+            _a, _b = list(set(_names6))
+            _alt = all(_names6[i] != _names6[i + 1] for i in range(len(_names6) - 1))
+            if _alt:
+                _pair_pingpong = (_a, _b)
+
     # --- consumed_topics: 一度話題になったが直近3件では出ていない語群 ---
     consumed_topics: list = []
     if len(log_entries) >= 8:
@@ -383,6 +394,7 @@ def update_conv_state(log_entries: list) -> ConversationState:
         sleep_intent_count=sleep_intent_count,
         speaker_recent_texts=speaker_recent_texts,
         elapsed_hours=_elapsed_hours,
+        pair_pingpong=_pair_pingpong,
     )
 
 
@@ -416,6 +428,10 @@ class MovePlanner:
             ]
         else:  # active
             pool = ["agree_and_extend", "ask", "bring_new_detail", "tease", "short_reaction", "observe"]
+
+        # pair_pingpong: 往復ペアなら invite_other / bridge を強制
+        if state.pair_pingpong and char_name in state.pair_pingpong:
+            pool = ["invite_other", "bridge", "soft_punchline", "summarize_and_close"] + pool
 
         # キャラ別バイアスを pool の前に挿入（優先度を上げる）
         char_bias = CHAR_MOVE_BIAS.get(char_name, [])

@@ -471,6 +471,27 @@ def _do_noah_feedback(log_entries: list) -> str:
     return f"書き戻し完了: {', '.join(results)}" if results else "書き戻す内容なし"
 
 
+def _should_save_reply(speaker: str, reply: str, log: list) -> bool:
+    """ログ保存直前の重複排除。完全一致 or 同キャラ直近3件と高類似なら False。"""
+    if not log or not reply:
+        return True
+    last = log[-1]
+    # 直前と同キャラ完全一致
+    if last.get("name") == speaker and last.get("text", "").strip() == reply.strip():
+        return False
+    # 同キャラ直近3件と意味的類似 >= 0.92
+    try:
+        from embedding import text_similarity as _ts
+        for e in reversed(log[-20:]):
+            if e.get("name") != speaker:
+                continue
+            if _ts(e.get("text", ""), reply) >= 0.92:
+                return False
+    except Exception:
+        pass
+    return True
+
+
 def _rebuild_mindmap(log_entries: list) -> None:
     """バックグラウンドでマインドマップ PNG を再生成して _auto_state に保存。"""
     try:
@@ -880,15 +901,18 @@ with tab_auto:
                     _tts_id = _speaker_from_mood(_mood_val, _char_styles, _spk_id) if _has_mood else _spk_id
                     if _reply:
                         _log = _auto_load_log()
-                        _log.append({
-                            "name": _cname,
-                            "text": _reply,
-                            "time": _now.strftime("%H:%M"),
-                            "timestamp": _now.isoformat(),
-                            "icon": speaker.get("icon", ""),
-                            "speaker_id": _tts_id,
-                        })
-                        _auto_save_log(_log)
+                        if _should_save_reply(_cname, _reply, _log):
+                            _log.append({
+                                "name": _cname,
+                                "text": _reply,
+                                "time": _now.strftime("%H:%M"),
+                                "timestamp": _now.isoformat(),
+                                "icon": speaker.get("icon", ""),
+                                "speaker_id": _tts_id,
+                            })
+                            _auto_save_log(_log)
+                        else:
+                            _log = _log  # skip: near-duplicate
                         # TTS: バックグラウンドで即時合成してキューに積む
                         if _auto_state.get("tts_enabled"):
                             # 音声再生終了推定時刻を計算（合成10s + 再生 len/5 s）

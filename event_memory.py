@@ -563,5 +563,11 @@ def build_event_context_prompt(events: list, resolved: list,
                 lines.append(f"  ・「{e.title}」: {summary}。これ以上準備の繰り返し不要。次の実行や結果に移ってよい。")
             else:
                 lines.append(f"  ・「{e.title}」: 話し合い中。準備話の繰り返しは避ける。")
+        # active_event_slots 警告（同時進行 >= 2）
+        if len(active) >= 2:
+            lines.append(
+                "⚠ 複数の企画が同時進行中です。新しい担当・材料・準備を増やさず、"
+                "どれか1つを「終わった」「保留」「寝る前には無理」として閉じてください。"
+            )
 
     return "\n".join(lines)
