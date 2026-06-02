@@ -68,7 +68,7 @@ from speakers import (
     extract_soul_interests, detect_topic_repetition,
     load_episodes, format_episodes_for_prompt, save_episode,
 )
-from mindmap import build_mindmap_html
+from mindmap import build_mindmap_image
 from conversation_controller import (
     CONTROL_RATE, DISTINCTIVE_FPS,
     update_conv_state, MovePlanner, build_move_instruction,
@@ -465,11 +465,11 @@ def _do_noah_feedback(log_entries: list) -> str:
 
 
 def _rebuild_mindmap(log_entries: list) -> None:
-    """バックグラウンドでマインドマップHTMLを再生成して _auto_state に保存。"""
+    """バックグラウンドでマインドマップ PNG を再生成して _auto_state に保存。"""
     try:
         from event_memory import load_events as _load_ev
-        html = build_mindmap_html(log_entries, _load_ev())
-        _auto_state["mindmap_html"] = html
+        png = build_mindmap_image(log_entries, _load_ev())
+        _auto_state["mindmap_html"] = png  # PNG bytes を格納
     except Exception:
         pass
 
@@ -1088,16 +1088,16 @@ with tab_auto:
                     pass
 
         # 会話マップ
-        _mindmap_html = _auto_state.get("mindmap_html", "")
+        _mindmap_png = _auto_state.get("mindmap_html")  # PNG bytes or None
         with st.expander("🗺️ 会話マップ", expanded=False):
             if st.button("🔄 マップ更新", key="mindmap_now"):
                 _map_log = _auto_load_log()
                 if _map_log:
                     with st.spinner("生成中..."):
                         _rebuild_mindmap(_map_log)
-                    _mindmap_html = _auto_state.get("mindmap_html", "")
-            if _mindmap_html:
-                st.components.v1.html(_mindmap_html, height=600, scrolling=True)
+                    _mindmap_png = _auto_state.get("mindmap_html")
+            if _mindmap_png:
+                st.image(_mindmap_png, use_container_width=True)
             else:
                 st.caption("「マップ更新」または停止時・20ターンごとに自動生成されます。")
 

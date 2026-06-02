@@ -132,6 +132,158 @@ def _find_segment_for_event(ev, segments: list, log_entries: list, offset: int) 
     return len(segments) - 1
 
 
+def build_mindmap_image(log_entries: list,
+                         events: list = None,
+                         session_label: str = "自律会話") -> Optional[bytes]:
+    """matplotlib で左→右ツリーの PNG を生成。失敗時は None。"""
+    try:
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import matplotlib.patches as mpatches
+        from matplotlib.patches import FancyBboxPatch
+        import matplotlib.font_manager as fm
+        # macOS 日本語フォントを優先設定
+        _jp_fonts = ["Hiragino Sans", "Hiragino Kaku Gothic Pro", "Apple SD Gothic Neo", "BIZ UDGothic"]
+        _available = {f.name for f in fm.fontManager.ttflist}
+        for _f in _jp_fonts:
+            if _f in _available:
+                matplotlib.rcParams["font.family"] = _f
+                break
+
+        max_turns = 120
+        offset = max(0, len(log_entries) - max_turns)
+        segments = extract_topic_segments(log_entries, max_turns=max_turns)
+        if not segments:
+            return None
+        events = events or []
+
+        # --- ノード・エッジ収集 ---
+        nodes: list = []   # (id, label, level, color, shape)
+        edges: list = []   # (src_id, dst_id, color)
+
+        ROOT = "root"
+        nodes.append((ROOT, session_label, 0, "#ffffff", "box"))
+
+        for seg in segments:
+            color = _PALETTE[seg.index % len(_PALETTE)]
+            seg_id = f"seg_{seg.index}"
+            nodes.append((seg_id, seg.label, 1, color, "ellipse"))
+            edges.append((ROOT, seg_id, color))
+            for spk in seg.speakers:
+                spk_id = f"spk_{seg.index}_{spk}"
+                nodes.append((spk_id, spk, 2, color, "dot"))
+                edges.append((seg_id, spk_id, color))
+
+        for ev in events:
+            si = _find_segment_for_event(ev, segments, log_entries, offset)
+            ev_color = _EVENT_COLORS.get(ev.status, "#888888")
+            ev_id = f"ev_{ev.id}"
+            ev_label = f"📌{ev.title[:10]}"
+            nodes.append((ev_id, ev_label, 2, ev_color, "box"))
+            edges.append((f"seg_{si}", ev_id, ev_color))
+
+        # --- 座標計算（レベル別に Y を均等配置） ---
+        from collections import defaultdict
+        level_nodes: dict = defaultdict(list)
+        for nid, label, level, color, shape in nodes:
+            level_nodes[level].append(nid)
+
+        # 各ノードの親を記録
+        parent_map: dict = {}
+        for src, dst, _ in edges:
+            parent_map[dst] = src
+
+        # レベル2ノードを親ごとにグループ化してY座標を決定
+        def assign_y(node_id: str, child_ids: list, y_start: float, y_step: float) -> dict:
+            coords = {}
+            for i, nid in enumerate(child_ids):
+                coords[nid] = y_start + i * y_step
+            return coords
+
+        # L1ノード（セグメント）のY座標
+        l1_ids = level_nodes[1]
+        n_l1 = len(l1_ids)
+        y_coords: dict = {}
+        x_coords: dict = {}
+
+        # L2の合計数からL1のY間隔を計算
+        l2_per_l1 = {}
+        for nid in level_nodes[2]:
+            par = parent_map.get(nid)
+            if par:
+                l2_per_l1.setdefault(par, []).append(nid)
+
+        # L1ごとのY中心を決定
+        y_cursor = 0.0
+        l1_y_center = {}
+        for seg_id in l1_ids:
+            children = l2_per_l1.get(seg_id, [])
+            span = max(1, len(children))
+            l1_y_center[seg_id] = y_cursor + (span - 1) / 2.0
+            # L2ノードのY
+            for i, c in enumerate(children):
+                y_coords[c] = y_cursor + i
+                x_coords[c] = 2.0
+            y_cursor += span + 0.4
+
+        for seg_id in l1_ids:
+            y_coords[seg_id] = l1_y_center[seg_id]
+            x_coords[seg_id] = 1.0
+
+        y_coords[ROOT] = (y_cursor - 0.4) / 2.0
+        x_coords[ROOT] = 0.0
+
+        # --- 描画 ---
+        total_h = max(4, y_cursor + 1)
+        fig_w = 14
+        fig_h = max(5, total_h * 0.7)
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        fig.patch.set_facecolor("#0e1117")
+        ax.set_facecolor("#0e1117")
+        ax.axis("off")
+
+        # エッジ
+        for src, dst, ecolor in edges:
+            sx, sy = x_coords.get(src, 0), y_coords.get(src, 0)
+            dx, dy = x_coords.get(dst, 0), y_coords.get(dst, 0)
+            ax.plot([sx, (sx + dx) / 2, dx], [sy, sy, dy],
+                    color=ecolor, linewidth=1.5, alpha=0.7,
+                    solid_capstyle="round")
+
+        # ノード
+        for nid, label, level, color, shape in nodes:
+            x = x_coords.get(nid, 0)
+            y = y_coords.get(nid, 0)
+            fs = 10 if level == 2 else (13 if level == 1 else 14)
+            fc = "#000000" if color == "#ffffff" else "#ffffff"
+            bx = ax.text(x, y, label,
+                         ha="left" if level > 0 else "center",
+                         va="center",
+                         fontsize=fs,
+                         color=fc,
+                         bbox=dict(
+                             boxstyle="round,pad=0.3",
+                             facecolor=color,
+                             edgecolor="none",
+                             alpha=0.9,
+                         ))
+
+        # x軸の余白
+        ax.set_xlim(-0.5, 2.8)
+        ax.set_ylim(-0.8, y_cursor + 0.3)
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=120, bbox_inches="tight",
+                    facecolor=fig.get_facecolor())
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+    except Exception:
+        return None
+
+
 def build_mindmap_html(log_entries: list,
                         events: list = None,
                         session_label: str = "自律会話") -> str:
