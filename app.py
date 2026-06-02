@@ -15,9 +15,16 @@ import requests
 import streamlit as st
 
 
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
 @st.cache_data(max_entries=50)
 def _load_icon_bytes(path: str) -> Optional[bytes]:
-    """アイコンをバイト列でキャッシュ（パス渡しによるURL エンコード問題を回避）。"""
+    """アイコンをバイト列でキャッシュ。相対パスは app.py 基準の絶対パスに変換。"""
+    if not path:
+        return None
+    if not os.path.isabs(path):
+        path = os.path.join(_APP_DIR, path)
     try:
         with open(path, "rb") as f:
             return f.read()
