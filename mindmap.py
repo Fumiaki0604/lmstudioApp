@@ -121,7 +121,6 @@ def _find_segment_for_event(ev, segments: list, log_entries: list, offset: int) 
     first_seen = (getattr(ev, "first_seen_at", "") or "")[:16]
     if not first_seen:
         return len(segments) - 1
-    tail = log_entries[-len(segments[0].end_idx + 1 + offset):]  # approximation
     for raw_i, entry in enumerate(log_entries):
         if entry.get("timestamp", "").startswith(first_seen):
             adj_i = raw_i - offset
@@ -157,7 +156,12 @@ def build_mindmap_image(log_entries: list,
         segments = extract_topic_segments(log_entries, max_turns=max_turns)
         if not segments:
             return None
-        events = events or []
+        # イベントは expired 除外 + 直近8件のみ（多すぎると縦長になる）
+        _ev_priority = {"decided": 0, "assumed_done": 1, "needs_resolution": 2, "maybe_done": 3, "planned": 4}
+        events = sorted(
+            [e for e in (events or []) if e.status != "expired"],
+            key=lambda e: _ev_priority.get(e.status, 9)
+        )[:8]
 
         # --- ノード・エッジ収集 ---
         nodes: list = []   # (id, label, level, color, shape)
@@ -180,7 +184,7 @@ def build_mindmap_image(log_entries: list,
             si = _find_segment_for_event(ev, segments, log_entries, offset)
             ev_color = _EVENT_COLORS.get(ev.status, "#888888")
             ev_id = f"ev_{ev.id}"
-            ev_label = f"📌{ev.title[:10]}"
+            ev_label = f"[E] {ev.title[:10]}"
             nodes.append((ev_id, ev_label, 2, ev_color, "box"))
             edges.append((f"seg_{si}", ev_id, ev_color))
 
@@ -275,7 +279,7 @@ def build_mindmap_image(log_entries: list,
         ax.set_ylim(-0.8, y_cursor + 0.3)
 
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=120, bbox_inches="tight",
+        fig.savefig(buf, format="png", dpi=96, bbox_inches="tight",
                     facecolor=fig.get_facecolor())
         plt.close(fig)
         buf.seek(0)
