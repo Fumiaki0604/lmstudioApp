@@ -17,7 +17,7 @@ _AUTO_LOG_FILE = STORE_DIR / "auto_chat_log.json"
 
 _auto_gen_lock = threading.Lock()
 # mutable dict でスレッド状態を保持（Streamlit rerun で上書きされない）
-_auto_state = {"generating": False, "name": "", "mindmap_html": ""}
+_auto_state = {"generating": False, "name": "", "mindmap_html": "", "sleeping_chars": set()}
 
 
 def parse_soul_affinities(soul_text: str) -> dict:

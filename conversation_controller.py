@@ -123,14 +123,14 @@ MOVE_INSTRUCTIONS = {
 
 # ─── キャラ別 move_type バイアス ──────────────────────────────────────────────
 CHAR_MOVE_BIAS: dict = {
-    "東北ずん子":  ["invite_other", "assign_role", "care_but_move", "process_risk"],
+    "東北ずん子":  ["invite_other", "care_but_move", "short_reaction", "bridge"],
     "東北きりたん": ["tease", "introduce_conflict", "short_reaction", "close_for_sleep"],
     "四国めたん":  ["summarize_and_close", "ask", "calm_reframe", "reflect_on_event", "resolve_future_plan", "close_for_sleep"],
     "中国うさぎ":  ["observe", "bridge", "soft_punchline", "imagine_risk"],
     "Noah":       ["observe", "bridge", "soft_punchline", "reflect_on_event", "mark_event_expired", "resolve_future_plan", "close_for_sleep"],
     "Hermes":     ["resolve_future_plan", "summarize_and_close", "reframe", "soft_punchline", "mark_event_expired"],
-    "雨晴はう":   ["shift", "bring_new_detail", "invite_other"],
-    "春日部つむぎ": ["bring_new_detail", "tease", "short_reaction", "process_risk"],
+    "雨晴はう":   ["shift", "invite_other", "short_reaction", "bridge"],
+    "春日部つむぎ": ["tease", "short_reaction", "process_risk", "reframe"],
     "WhiteCUL":   ["reframe", "ask", "soft_punchline"],
 }
 
@@ -426,7 +426,7 @@ class MovePlanner:
         elif state.future_plan_loop:
             pool = ["resolve_future_plan", "summarize_and_close", "soft_punchline", "reflect_on_event", "bridge"]
         elif state.should_close_topic:
-            pool = ["summarize_and_close", "bridge", "shift", "assign_role"]
+            pool = ["summarize_and_close", "bridge", "shift", "soft_punchline"]
         elif state.topic_stage == "closing":
             pool = ["shift", "bridge", "summarize_and_close", "invite_other", "short_reaction"]
         elif state.topic_stage == "aging":
@@ -435,8 +435,8 @@ class MovePlanner:
                 "introduce_conflict", "introduce_conflict",
                 "assign_role", "observe",
             ]
-        else:  # active
-            pool = ["agree_and_extend", "ask", "bring_new_detail", "tease", "short_reaction", "observe"]
+        else:  # active（雑談ベース: assign_role / activity_proposal 系を外す）
+            pool = ["agree_and_extend", "ask", "tease", "short_reaction", "observe", "reframe", "shift"]
 
         # pair_pingpong: 往復ペアなら invite_other / bridge を強制
         if state.pair_pingpong and char_name in state.pair_pingpong:

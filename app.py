@@ -632,6 +632,7 @@ with tab_auto:
                 _auto_save_log([])
                 st.session_state["auto_tts_last_ts"] = ""
                 _auto_state["tts_last_shown_ts"] = ""
+                _auto_state["sleeping_chars"] = set()  # 就寝キャラをリセット
                 for _f in TTS_QUEUE_DIR.glob("*.wav"):
                     try: _f.unlink()
                     except Exception: pass
@@ -923,6 +924,10 @@ with tab_auto:
                                 "speaker_id": _tts_id,
                             })
                             _auto_save_log(_log)
+                            # 就寝発言でキャラを一時退出
+                            _SLEEP_EXIT = {"おやすみ", "寝ます", "寝るね", "寝るわ", "寝る時間", "おやすみなさい", "寝落ち"}
+                            if any(w in _reply for w in _SLEEP_EXIT):
+                                _auto_state["sleeping_chars"].add(_cname)
                         else:
                             _log = _log  # skip: near-duplicate
                         # TTS: バックグラウンドで即時合成してキューに積む
@@ -1022,6 +1027,8 @@ with tab_auto:
                 for _n in _recent_names:
                     _name_counts[_n] = _name_counts.get(_n, 0) + 1
                 _excluded_speakers = {_n for _n, _cnt in _name_counts.items() if _cnt >= 2}
+                # 就寝キャラも除外
+                _excluded_speakers |= _auto_state.get("sleeping_chars", set())
                 _sp_candidates = [c for c in auto_all_chars if c["name"] not in _excluded_speakers]
                 if not _sp_candidates:
                     _sp_candidates = auto_all_chars

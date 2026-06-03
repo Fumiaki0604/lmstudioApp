@@ -306,7 +306,7 @@ def update_event_candidates(classification: dict, reply: str, speaker: str,
     """候補を更新し、昇格条件を満たせば EventMemory に移す。returns (candidates, events)"""
     if not classification.get("is_event_intent"):
         return candidates, events
-    if classification.get("confidence", 0) < 0.6:
+    if classification.get("confidence", 0) < 0.80:
         return candidates, events
     title = _normalize_title(classification.get("title") or "")
     if not title:
@@ -340,7 +340,8 @@ def update_event_candidates(classification: dict, reply: str, speaker: str,
 
     has_role = classification.get("event_type") in ("role_assignment", "decision")
     has_time = matched.time_hint in ("now", "tonight", "tomorrow")
-    if matched.mentions >= 2 or has_role or (has_time and matched.confidence >= 0.75):
+    # 雑談モードでは昇格条件を厳しく: mentions>=3 or 役割確定 or 具体的時間+高信頼度
+    if matched.mentions >= 3 or has_role or (has_time and matched.confidence >= 0.85):
         events, candidates = _promote_candidate(matched, candidates, events, now_str)
 
     return candidates, events
@@ -587,7 +588,8 @@ def build_event_context_prompt(events: list, resolved: list,
                 f"触れるなら「明日どうだったか」か「今日は寝る」方向で。"
             )
 
-    active = [e for e in events if e.status in ("planned", "maybe_done", "assumed_done", "needs_resolution")]
+    # planned/maybe_done は注入しない（雑談で再オープンを防ぐ）
+    active = [e for e in events if e.status in ("assumed_done", "needs_resolution")]
     if active:
         lines.append("現在話し合っている話題:")
         for e in active[:3]:
