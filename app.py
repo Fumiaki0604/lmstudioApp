@@ -693,12 +693,17 @@ with tab_auto:
                     # 話題転換: クールダウン中 or 直近ループ検出でsoul固有話題を注入
                     _cooldown = st.session_state.get("topic_change_cooldown", 0)
                     if mention_from:
-                        # pair_pingpong中は同じ相手への返メンションを抑制
-                        _pp = (_conv_state.pair_pingpong if _conv_state else ())
+                        # pair_pingpong中は同じ相手への返メンションを抑制（_log から直接判定）
+                        _names6 = [e.get("name", "") for e in _log[-6:] if e.get("name")]
+                        _is_pp = (
+                            len(set(_names6)) == 2 and len(_names6) >= 4
+                            and mention_from in _names6 and _cname in _names6
+                            and all(_names6[i] != _names6[i + 1] for i in range(len(_names6) - 1))
+                        )
                         _pp_break = (
                             "\nただし、同じ相手に返し続けず、話を1文でまとめてから"
                             "第三者に話を渡すか話題を閉じてください。"
-                            if (_pp and mention_from in _pp) else ""
+                            if _is_pp else ""
                         )
                         _topic_instr = f"\n【メンション】{mention_from}から呼ばれています。その内容に必ず返答してください。{_pp_break}"
                     elif _cooldown > 0:
