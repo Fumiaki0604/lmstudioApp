@@ -1,9 +1,9 @@
-"""会話マップ生成 — pyvis 左→右ツリー可視化。
+"""会話マップ生成 — 時間ベースセグメント + 3段階 matplotlib ツリー。
 
 使い方:
-    from mindmap import build_mindmap_html
-    html = build_mindmap_html(log_entries, events, session_label="自律会話")
-    # → st.components.v1.html(html, height=600, scrolling=True)
+    from mindmap import build_mindmap_image
+    png = build_mindmap_image(log_entries, events, session_label="自律会話")
+    # → st.image(png, use_container_width=True)
 """
 from collections import Counter
 from dataclasses import dataclass, field
@@ -17,6 +17,7 @@ _STOP = {
     "思う", "言う", "見る", "来る", "行く", "やる", "みる", "おく", "くれ",
     "いう", "なん", "でし", "まし", "だっ", "てい", "ちゃ", "じゃ", "って",
     "たい", "たら", "なら", "れる", "られ", "せる", "させ", "まで",
+    "ます", "です", "ない", "から", "まで", "より", "でも", "けど",
 }
 
 _PALETTE = [
@@ -34,359 +35,278 @@ _EVENT_COLORS = {
     "needs_resolution": "#f28e2b",
 }
 
-_EVENT_STATUS_JA = {
-    "planned": "計画中", "maybe_done": "実施?",
-    "assumed_done": "完了", "decided": "決定済",
-    "expired": "期限切れ", "needs_resolution": "要確認",
+_STATUS_MARK = {
+    "assumed_done": "✓", "decided": "✓",
+    "maybe_done": "?", "planned": "…",
+    "needs_resolution": "!", "expired": "×",
 }
 
 
+_PARTICLES = {"の", "に", "を", "は", "が", "で", "と", "も", "か", "へ", "や",
+              "ら", "り", "て", "し", "な", "ね", "よ", "わ", "さ", "ぞ"}
+
+
+def _words(text: str) -> list:
+    """漢字を含む5文字以内の語 or 英単語のみ抽出。助詞始まり・終わり・平仮名のみを除外。"""
+    result = []
+    for w in _WORD_RE.findall(text):
+        if w in _STOP or len(w) < 2:
+            continue
+        if re.search(r'[一-鿿]', w) and len(w) <= 5:
+            # 先頭・末尾が助詞なら除外
+            if w[0] in _PARTICLES or w[-1] in _PARTICLES:
+                continue
+            result.append(w)
+        elif re.match(r'[a-zA-Z]{3,}$', w):
+            result.append(w)
+    return result
+
+
+# ─── TimeSegment dataclass ────────────────────────────────────────────────────
+
 @dataclass
-class TopicSegment:
+class TimeSegment:
     index: int
-    label: str
-    start_idx: int
+    label: str           # 話題キーワード
+    time_start: str      # 開始時刻 ("22:30")
+    time_end: str        # 終了時刻
+    start_idx: int       # log_entries 上の絶対インデックス
     end_idx: int
-    speakers: list = field(default_factory=list)
-    topic_terms: list = field(default_factory=list)
+    speakers: list       # [(name, count), ...]
+    events: list = field(default_factory=list)  # EventMemory
 
 
-def _words(text: str) -> set:
-    return set(_WORD_RE.findall(text)) - _STOP
+# ─── セグメント抽出（時間ベース固定分割）────────────────────────────────────
 
-
-def _jaccard(a: set, b: set) -> float:
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
-
-
-def extract_topic_segments(log_entries: list,
-                            window: int = 5,
-                            threshold: float = 0.15,
-                            max_turns: int = 120) -> list:
-    """Jaccard 類似度で隣接ウィンドウを比較し、話題転換点を検出する。"""
+def extract_time_segments(log_entries: list,
+                           segment_size: int = 20,
+                           max_turns: int = 120) -> list:
+    """N ターンごとに固定分割し、各セグメントに識別キーワードを付ける。"""
     entries = log_entries[-max_turns:]
     n = len(entries)
-    if n < 2:
+    offset = max(0, len(log_entries) - max_turns)
+    if n == 0:
         return []
 
-    word_sets = [_words(e.get("text", "")) for e in entries]
-
-    def win_words(start: int) -> set:
-        result: set = set()
-        for i in range(start, min(start + window, n)):
-            result |= word_sets[i]
-        return result
-
-    boundaries = [0]
-    step = max(1, window // 2)
-    prev_w = win_words(0)
-    for i in range(step, n, step):
-        curr_w = win_words(i)
-        if _jaccard(prev_w, curr_w) < threshold and i not in boundaries:
-            boundaries.append(i)
-        prev_w = curr_w
-    boundaries.append(n)
-    boundaries = sorted(set(boundaries))
+    # 全ターンの単語頻度（TF-IDF 計算用）
+    all_words: Counter = Counter()
+    for e in entries:
+        for w in _words(e.get("text", "")):
+            all_words[w] += 1
 
     segments = []
-    for bi in range(len(boundaries) - 1):
-        s, e = boundaries[bi], boundaries[bi + 1]
+    for si, start in enumerate(range(0, n, segment_size)):
+        chunk = entries[start:start + segment_size]
+        if not chunk:
+            break
 
-        freq: Counter = Counter()
-        for idx in range(s, e):
-            for w in word_sets[idx]:
-                freq[w] += 1
-        topic_terms = [w for w, _ in freq.most_common(5)]
-        label = "・".join(topic_terms[:3]) if topic_terms else f"話題{bi + 1}"
+        # 時刻
+        t_start = chunk[0].get("time", "")
+        t_end = chunk[-1].get("time", "")
 
-        spk_cnt: Counter = Counter(entry.get("name", "") for entry in entries[s:e])
-        speakers = [sp for sp, c in spk_cnt.most_common() if c >= 2 and sp]
+        # 話者カウント
+        spk_cnt: Counter = Counter(e.get("name", "") for e in chunk if e.get("name"))
+        speakers = [(name, cnt) for name, cnt in spk_cnt.most_common(3) if name]
 
-        segments.append(TopicSegment(
-            index=bi,
+        # 識別キーワード: このセグメントに多く出てグローバルでは普通の語
+        chunk_words: Counter = Counter()
+        for e in chunk:
+            for w in _words(e.get("text", "")):
+                chunk_words[w] += 1
+
+        scores = {
+            w: freq / max(1.0, all_words[w] ** 0.4)
+            for w, freq in chunk_words.items() if freq >= 2
+        }
+        top_words = sorted(scores, key=lambda w: -scores[w])[:3]
+        # 識別語が少ない場合は頻出語で補完
+        if len(top_words) < 2:
+            freq_fallback = [w for w, _ in chunk_words.most_common(5)
+                             if w not in top_words]
+            top_words = (top_words + freq_fallback)[:3]
+        label = "・".join(top_words) if top_words else f"話題{si + 1}"
+
+        segments.append(TimeSegment(
+            index=si,
             label=label,
-            start_idx=s,
-            end_idx=e - 1,
+            time_start=t_start,
+            time_end=t_end,
+            start_idx=offset + start,
+            end_idx=offset + start + len(chunk) - 1,
             speakers=speakers,
-            topic_terms=topic_terms,
         ))
 
     return segments
 
 
-def _find_segment_for_event(ev, segments: list, log_entries: list, offset: int) -> int:
-    """EventMemory の first_seen_at タイムスタンプからセグメントを逆引き。"""
-    first_seen = (getattr(ev, "first_seen_at", "") or "")[:16]
-    if not first_seen:
-        return len(segments) - 1
-    for raw_i, entry in enumerate(log_entries):
-        if entry.get("timestamp", "").startswith(first_seen):
-            adj_i = raw_i - offset
-            for si, seg in enumerate(segments):
-                if seg.start_idx <= adj_i <= seg.end_idx:
-                    return si
-            break
-    return len(segments) - 1
+def _assign_events(segments: list, events: list, log_entries: list, offset: int) -> None:
+    """EventMemory を first_seen_at のタイムスタンプで対応セグメントに振り分ける。"""
+    for ev in events:
+        first_seen = (getattr(ev, "first_seen_at", "") or "")[:16]
+        target_si = len(segments) - 1
+        if first_seen:
+            for raw_i, entry in enumerate(log_entries):
+                if entry.get("timestamp", "").startswith(first_seen):
+                    for si, seg in enumerate(segments):
+                        if seg.start_idx <= raw_i <= seg.end_idx:
+                            target_si = si
+                            break
+                    break
+        segments[target_si].events.append(ev)
 
+
+# ─── 描画ユーティリティ ───────────────────────────────────────────────────────
+
+def _bezier(ax, x1, y1, x2, y2, color, lw=1.8, alpha=0.75):
+    """S字ベジェ曲線でノードを接続（MindWeaver スタイル）。"""
+    from matplotlib.path import Path
+    import matplotlib.patches as mpatches
+    cx = (x1 + x2) / 2
+    verts = [(x1, y1), (cx, y1), (cx, y2), (x2, y2)]
+    codes = [Path.MOVETO, Path.CURVE4, Path.CURVE4, Path.CURVE4]
+    path = Path(verts, codes)
+    patch = mpatches.PathPatch(
+        path, facecolor="none", edgecolor=color,
+        linewidth=lw, alpha=alpha, capstyle="round", zorder=2,
+    )
+    ax.add_patch(patch)
+
+
+def _dot(ax, x, y, color, r=0.055, zorder=4):
+    import matplotlib.patches as mpatches
+    ax.add_patch(mpatches.Circle((x, y), r, color=color, zorder=zorder))
+
+
+# ─── メイン描画関数 ──────────────────────────────────────────────────────────
 
 def build_mindmap_image(log_entries: list,
                          events: list = None,
                          session_label: str = "自律会話") -> Optional[bytes]:
-    """matplotlib で左→右ツリーの PNG を生成。失敗時は None。"""
+    """matplotlib で MindWeaver 風の左→右ツリー PNG を生成。失敗時は None。"""
     try:
         import io
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-        import matplotlib.patches as mpatches
-        from matplotlib.patches import FancyBboxPatch
         import matplotlib.font_manager as fm
-        # macOS 日本語フォントを優先設定
-        _jp_fonts = ["Hiragino Sans", "Hiragino Kaku Gothic Pro", "Apple SD Gothic Neo", "BIZ UDGothic"]
-        _available = {f.name for f in fm.fontManager.ttflist}
-        for _f in _jp_fonts:
-            if _f in _available:
+
+        # 日本語フォント
+        _jp = ["Hiragino Sans", "Hiragino Kaku Gothic Pro", "Apple SD Gothic Neo",
+               "BIZ UDGothic", "Noto Sans CJK JP"]
+        _avail = {f.name for f in fm.fontManager.ttflist}
+        for _f in _jp:
+            if _f in _avail:
                 matplotlib.rcParams["font.family"] = _f
                 break
 
+        # --- セグメント抽出 ---
         max_turns = 120
         offset = max(0, len(log_entries) - max_turns)
-        segments = extract_topic_segments(log_entries, max_turns=max_turns)
+        segments = extract_time_segments(log_entries, max_turns=max_turns)
         if not segments:
             return None
-        # イベントは expired 除外 + 直近8件のみ（多すぎると縦長になる）
-        _ev_priority = {"decided": 0, "assumed_done": 1, "needs_resolution": 2, "maybe_done": 3, "planned": 4}
-        events = sorted(
+
+        # --- イベント振り分け（expired 除外・上位8件） ---
+        _ev_pri = {"decided": 0, "assumed_done": 1, "needs_resolution": 2,
+                   "maybe_done": 3, "planned": 4}
+        ev_list = sorted(
             [e for e in (events or []) if e.status != "expired"],
-            key=lambda e: _ev_priority.get(e.status, 9)
+            key=lambda e: _ev_pri.get(e.status, 9)
         )[:8]
+        _assign_events(segments, ev_list, log_entries, offset)
 
-        # --- ノード・エッジ収集 ---
-        nodes: list = []   # (id, label, level, color, shape)
-        edges: list = []   # (src_id, dst_id, color)
+        # --- Y レイアウト計算 ---
+        Y_ITEM = 0.75   # L2 ノード間の間隔
+        Y_GAP  = 0.55   # L1 グループ間の余白
 
-        ROOT = "root"
-        nodes.append((ROOT, session_label, 0, "#ffffff", "box"))
-
+        y_cur = 0.0
         for seg in segments:
-            color = _PALETTE[seg.index % len(_PALETTE)]
-            seg_id = f"seg_{seg.index}"
-            # セグメントラベルに主要話者を括弧で付加
-            spk_note = f"（{' '.join(seg.speakers[:3])}）" if seg.speakers else ""
-            seg_label = seg.label + "\n" + spk_note if spk_note else seg.label
-            nodes.append((seg_id, seg_label, 1, color, "ellipse"))
-            edges.append((ROOT, seg_id, color))
+            n = max(1, len(seg.events))
+            seg._y_start = y_cur
+            seg._y_center = y_cur + (n - 1) * Y_ITEM / 2
+            y_cur += n * Y_ITEM + Y_GAP
 
-        for ev in events:
-            si = _find_segment_for_event(ev, segments, log_entries, offset)
-            ev_color = _EVENT_COLORS.get(ev.status, "#888888")
-            ev_id = f"ev_{ev.id}"
-            ev_label = f"[E] {ev.title[:10]}"
-            nodes.append((ev_id, ev_label, 2, ev_color, "box"))
-            edges.append((f"seg_{si}", ev_id, ev_color))
+        total_h = y_cur - Y_GAP
+        root_y = total_h / 2
 
-        # --- 座標計算（レベル別に Y を均等配置） ---
-        from collections import defaultdict
-        level_nodes: dict = defaultdict(list)
-        for nid, label, level, color, shape in nodes:
-            level_nodes[level].append(nid)
+        # X 座標
+        X_ROOT, X_L1, X_L2 = 0.0, 3.0, 6.2
 
-        # 各ノードの親を記録
-        parent_map: dict = {}
-        for src, dst, _ in edges:
-            parent_map[dst] = src
-
-        # レベル2ノードを親ごとにグループ化してY座標を決定
-        def assign_y(node_id: str, child_ids: list, y_start: float, y_step: float) -> dict:
-            coords = {}
-            for i, nid in enumerate(child_ids):
-                coords[nid] = y_start + i * y_step
-            return coords
-
-        # L1ノード（セグメント）のY座標
-        l1_ids = level_nodes[1]
-        n_l1 = len(l1_ids)
-        y_coords: dict = {}
-        x_coords: dict = {}
-
-        # L2の合計数からL1のY間隔を計算
-        l2_per_l1 = {}
-        for nid in level_nodes[2]:
-            par = parent_map.get(nid)
-            if par:
-                l2_per_l1.setdefault(par, []).append(nid)
-
-        # L1ごとのY中心を決定
-        y_cursor = 0.0
-        l1_y_center = {}
-        for seg_id in l1_ids:
-            children = l2_per_l1.get(seg_id, [])
-            span = max(1, len(children))
-            l1_y_center[seg_id] = y_cursor + (span - 1) / 2.0
-            # L2ノードのY
-            for i, c in enumerate(children):
-                y_coords[c] = y_cursor + i
-                x_coords[c] = 2.0
-            y_cursor += span + 0.4
-
-        for seg_id in l1_ids:
-            y_coords[seg_id] = l1_y_center[seg_id]
-            x_coords[seg_id] = 1.0
-
-        y_coords[ROOT] = (y_cursor - 0.4) / 2.0
-        x_coords[ROOT] = 0.0
-
-        # --- 描画 ---
-        total_h = max(4, y_cursor + 1)
-        fig_w = 14
-        fig_h = max(5, total_h * 0.7)
+        # --- Figure 初期化 ---
+        fig_w = 13
+        fig_h = max(4.5, total_h * 1.05 + 1.0)
         fig, ax = plt.subplots(figsize=(fig_w, fig_h))
         fig.patch.set_facecolor("#0e1117")
         ax.set_facecolor("#0e1117")
         ax.axis("off")
+        ax.set_xlim(-0.8, X_L2 + 2.8)
+        ax.set_ylim(-0.8, total_h + 0.8)
 
-        # エッジ
-        for src, dst, ecolor in edges:
-            sx, sy = x_coords.get(src, 0), y_coords.get(src, 0)
-            dx, dy = x_coords.get(dst, 0), y_coords.get(dst, 0)
-            ax.plot([sx, (sx + dx) / 2, dx], [sy, sy, dy],
-                    color=ecolor, linewidth=1.5, alpha=0.7,
-                    solid_capstyle="round")
+        # --- ルートノード ---
+        ax.text(
+            X_ROOT, root_y, session_label,
+            ha="center", va="center", fontsize=13, color="#000000",
+            fontweight="bold", zorder=5,
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="#ffffff",
+                      edgecolor="#cccccc", linewidth=1.2),
+        )
 
-        # ノード
-        for nid, label, level, color, shape in nodes:
-            x = x_coords.get(nid, 0)
-            y = y_coords.get(nid, 0)
-            fs = 10 if level == 2 else (13 if level == 1 else 14)
-            fc = "#000000" if color == "#ffffff" else "#ffffff"
-            bx = ax.text(x, y, label,
-                         ha="left" if level > 0 else "center",
-                         va="center",
-                         fontsize=fs,
-                         color=fc,
-                         bbox=dict(
-                             boxstyle="round,pad=0.3",
-                             facecolor=color,
-                             edgecolor="none",
-                             alpha=0.9,
-                         ))
+        # --- L1 セグメント + L2 イベント ---
+        for seg in segments:
+            color = _PALETTE[seg.index % len(_PALETTE)]
+            y1 = seg._y_center
 
-        # x軸の余白
-        ax.set_xlim(-0.5, 2.8)
-        ax.set_ylim(-0.8, y_cursor + 0.3)
+            # Root → L1
+            _bezier(ax, X_ROOT, root_y, X_L1, y1, color, lw=2.0)
+            _dot(ax, X_L1, y1, color, r=0.07)
 
+            # L1 ラベル（時刻 + トピック）
+            time_label = f"{seg.time_start}" if seg.time_start else ""
+            full_label = f"{time_label}\n{seg.label}" if time_label else seg.label
+            ax.text(
+                X_L1 + 0.18, y1, full_label,
+                ha="left", va="center", fontsize=10.5, color="#ffffff",
+                fontweight="normal", zorder=5, linespacing=1.3,
+            )
+
+            # L2 イベントノード
+            for ei, ev in enumerate(seg.events):
+                y2 = seg._y_start + ei * Y_ITEM
+                ev_color = _EVENT_COLORS.get(ev.status, "#888888")
+                mark = _STATUS_MARK.get(ev.status, "")
+
+                _bezier(ax, X_L1, y1, X_L2, y2, ev_color, lw=1.4, alpha=0.65)
+                _dot(ax, X_L2, y2, ev_color, r=0.05)
+
+                ev_label = f"{mark} {ev.title[:14]}"
+                ax.text(
+                    X_L2 + 0.12, y2, ev_label,
+                    ha="left", va="center", fontsize=9.5, color="#ffffff",
+                    zorder=5,
+                )
+
+            # イベントなし時: 主要話者を L1 ラベルの下に小さく表示
+            if not seg.events and seg.speakers:
+                top_spk = " / ".join(n for n, _ in seg.speakers[:3])
+                ax.text(
+                    X_L1 + 0.18, y1 - 0.28, top_spk,
+                    ha="left", va="top", fontsize=8.5, color="#666666",
+                    style="italic", zorder=5,
+                )
+
+        # --- 出力 ---
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", dpi=96, bbox_inches="tight",
+        fig.savefig(buf, format="png", dpi=110, bbox_inches="tight",
                     facecolor=fig.get_facecolor())
         plt.close(fig)
         buf.seek(0)
         return buf.read()
+
     except Exception:
         return None
 
 
-def build_mindmap_html(log_entries: list,
-                        events: list = None,
-                        session_label: str = "自律会話") -> str:
-    """会話ログからマインドマップ HTML を生成。pyvis 未インストール時は空文字列。"""
-    try:
-        from pyvis.network import Network
-    except ImportError:
-        return ""
+# ─── 後方互換（旧 pyvis HTML 版、未使用） ────────────────────────────────────
 
-    max_turns = 120
-    offset = max(0, len(log_entries) - max_turns)
-    segments = extract_topic_segments(log_entries, max_turns=max_turns)
-    if not segments:
-        return ""
-
-    net = Network(height="580px", width="100%", directed=True,
-                  bgcolor="#0e1117", font_color="white",
-                  cdn_resources="in_line")
-    net.set_options("""{
-      "layout": {
-        "hierarchical": {
-          "enabled": true,
-          "direction": "LR",
-          "sortMethod": "directed",
-          "levelSeparation": 260,
-          "nodeSpacing": 55,
-          "treeSpacing": 90,
-          "blockShifting": true,
-          "edgeMinimization": true,
-          "parentCentralization": true
-        }
-      },
-      "physics": { "enabled": false },
-      "edges": {
-        "smooth": {
-          "type": "cubicBezier",
-          "forceDirection": "horizontal",
-          "roundness": 0.4
-        },
-        "arrows": { "to": { "enabled": false } }
-      },
-      "nodes": {
-        "font": { "face": "Meiryo, Hiragino Sans, sans-serif" },
-        "borderWidth": 0
-      },
-      "interaction": {
-        "hover": true,
-        "navigationButtons": true,
-        "zoomView": true
-      }
-    }""")
-
-    # ルートノード
-    net.add_node("root", label=session_label, shape="box",
-                 color={"background": "#ffffff", "border": "#aaaaaa"},
-                 font={"size": 15, "color": "#000000"},
-                 level=0)
-
-    events = events or []
-
-    # 話題セグメントと話者ノード
-    for seg in segments:
-        color = _PALETTE[seg.index % len(_PALETTE)]
-        seg_id = f"seg_{seg.index}"
-        turn_range = f"ターン {offset + seg.start_idx}〜{offset + seg.end_idx}"
-
-        net.add_node(seg_id, label=seg.label, shape="ellipse",
-                     color={"background": color, "border": color},
-                     font={"size": 13, "color": "#ffffff"},
-                     level=1,
-                     title=turn_range)
-        net.add_edge("root", seg_id, color={"color": color, "opacity": 0.9}, width=2)
-
-        for spk in seg.speakers:
-            spk_id = f"spk_{seg.index}_{spk}"
-            net.add_node(spk_id, label=spk, shape="dot",
-                         color={"background": color, "border": color},
-                         size=12,
-                         font={"size": 11, "color": "#ffffff"},
-                         level=2)
-            net.add_edge(seg_id, spk_id,
-                         color={"color": color, "opacity": 0.55}, width=1)
-
-    # イベントノード（セグメントに紐付け）
-    for ev in events:
-        si = _find_segment_for_event(ev, segments, log_entries, offset)
-        ev_color = _EVENT_COLORS.get(ev.status, "#888888")
-        status_ja = _EVENT_STATUS_JA.get(ev.status, ev.status)
-        ev_label = f"📌 {ev.title[:12]}"
-        ev_id = f"ev_{ev.id}"
-        net.add_node(ev_id, label=ev_label, shape="box",
-                     color={"background": ev_color, "border": ev_color},
-                     font={"size": 10, "color": "#000000"},
-                     level=2,
-                     title=f"{ev.title}（{status_ja}）")
-        net.add_edge(f"seg_{si}", ev_id,
-                     color={"color": ev_color, "opacity": 0.75},
-                     width=1, dashes=True)
-
-    try:
-        return net.generate_html()
-    except Exception:
-        return ""
+def build_mindmap_html(*args, **kwargs) -> str:
+    return ""
