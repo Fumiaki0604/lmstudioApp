@@ -89,7 +89,7 @@ from event_memory import (
     load_resolved, save_resolved,
     resolve_events, update_event_candidates, update_preparation_mentions,
     apply_director_event_action,
-    build_event_context_prompt, classify_event_intent,
+    build_event_context_prompt, classify_event_intent, detect_completion,
     get_decided_event_hint, mark_decided,
 )
 
@@ -693,7 +693,14 @@ with tab_auto:
                     # 話題転換: クールダウン中 or 直近ループ検出でsoul固有話題を注入
                     _cooldown = st.session_state.get("topic_change_cooldown", 0)
                     if mention_from:
-                        _topic_instr = f"\n【メンション】{mention_from}から呼ばれています。その内容に必ず返答してください。"
+                        # pair_pingpong中は同じ相手への返メンションを抑制
+                        _pp = (_conv_state.pair_pingpong if _conv_state else ())
+                        _pp_break = (
+                            "\nただし、同じ相手に返し続けず、話を1文でまとめてから"
+                            "第三者に話を渡すか話題を閉じてください。"
+                            if (_pp and mention_from in _pp) else ""
+                        )
+                        _topic_instr = f"\n【メンション】{mention_from}から呼ばれています。その内容に必ず返答してください。{_pp_break}"
                     elif _cooldown > 0:
                         st.session_state["topic_change_cooldown"] = _cooldown - 1
                         _interests = extract_soul_interests(_soul) if _soul else ""
@@ -937,6 +944,18 @@ with tab_auto:
                         # Phase 3: EventMemory（LLM呼び出しなしの部分のみ実行）
                         try:
                             _em_events = update_preparation_mentions(_reply, _em_events)
+                            # completion_marker: 完了表現 + embedding でイベントを assumed_done に遷移
+                            _completed = detect_completion(_reply, _em_events)
+                            if _completed:
+                                _completed_ids = {eid for eid, _ in _completed}
+                                for _ev in _em_events:
+                                    if _ev.id in _completed_ids and _ev.status in ("planned", "maybe_done", "needs_resolution"):
+                                        _ev.status = "assumed_done"
+                                        _ev.outcome_summary = f"{_cname}の発言から完了と判断: {_reply[:40]}"
+                                        _dbg_cm = f"✅ CompletionMarker: 「{_ev.title}」→ assumed_done"
+                                        st.session_state["topic_debug_log"] = (
+                                            [_dbg_cm] + st.session_state.get("topic_debug_log", [])
+                                        )[:20]
                             save_events(_em_events)
                         except Exception:
                             pass

@@ -234,6 +234,7 @@ class ConversationState:
     active_goal: str = ""                                  # 現在の会話目標（EventMemoryから注入）
     future_plan_loop: bool = False                         # 「明日やろう/準備」が3回以上連続
     sleep_intent_count: int = 0                           # 直近5件での眠い/寝る系ワード数
+    sleep_closure_active: bool = False                    # 直近8件で眠い>=2 → 数ターン就寝方向を維持
     speaker_recent_texts: dict = field(default_factory=dict)  # {name: [text, ...]} 同キャラ重複検出用
     pair_pingpong: tuple = ()                             # 往復ループ中のペア (A, B) or ()
     decided_event_hint: str = ""                           # app.pyから注入: decided event の禁止指示
@@ -329,6 +330,9 @@ def update_conv_state(log_entries: list) -> ConversationState:
     # --- sleep_intent_count (直近5件で眠い/寝る系ワード) ---
     sleep_hits = sum(1 for e in recent5 if any(t in e.get("text", "") for t in SLEEP_TERMS))
     sleep_intent_count = sleep_hits
+    # --- sleep_closure_active: 直近8件で眠い>=2 なら数ターン就寝方向を維持 ---
+    _sleep8 = log_entries[-8:] if log_entries else []
+    sleep_closure_active = sum(1 for e in _sleep8 if any(t in e.get("text", "") for t in SLEEP_TERMS)) >= 2
 
     # --- per-speaker直近発言（同キャラ重複防止用、直近15件から再構築） ---
     speaker_recent_texts: dict = {}
@@ -392,6 +396,7 @@ def update_conv_state(log_entries: list) -> ConversationState:
         consumed_topics=consumed_topics,
         future_plan_loop=future_plan_loop,
         sleep_intent_count=sleep_intent_count,
+        sleep_closure_active=sleep_closure_active,
         speaker_recent_texts=speaker_recent_texts,
         elapsed_hours=_elapsed_hours,
         pair_pingpong=_pair_pingpong,
@@ -410,6 +415,10 @@ class MovePlanner:
         # ステージ別ベース pool
         if state.care_loop_score >= 0.6:
             pool = ["tease", "short_reaction", "introduce_conflict", "summarize_and_close", "bridge"]
+        elif state.sleep_closure_active:
+            # 就寝クロージング維持: assign_role/ask/bring_new_detail を締め出す
+            pool = ["close_for_sleep", "soft_punchline", "short_reaction",
+                    "summarize_and_close", "reflect_on_event"]
         elif state.sleep_intent_count >= 2 and state.future_plan_loop:
             pool = ["close_for_sleep", "summarize_and_close", "soft_punchline"]
         elif state.sleep_intent_count >= 3:

@@ -174,6 +174,43 @@ def save_resolved(resolved: list):
     )
 
 
+# ─── CompletionMarker ────────────────────────────────────────────────────────
+
+_COMPLETION_WORDS = {
+    "終わった", "終わってる", "終わってます", "済んだ", "済みました",
+    "できた", "できました", "完了", "終わり", "やった", "やっちゃった",
+    "もう終", "終了", "片付いた", "片付いてる", "終えた", "終えて",
+}
+
+
+def detect_completion(reply: str, events: list, threshold: float = 0.40) -> list:
+    """発話が既存イベントの完了を示すか判定し、(event_id, similarity) のリストを返す。
+
+    完了ワードが含まれる かつ イベントタイトルとの embedding 類似度 >= threshold の場合にマッチ。
+    LLM 呼び出しなし・background=True 呼び出し前提。
+    """
+    if not any(w in reply for w in _COMPLETION_WORDS):
+        return []
+    closeable = [e for e in events if e.status in ("planned", "maybe_done", "needs_resolution")]
+    if not closeable:
+        return []
+    matches = []
+    try:
+        from embedding import text_similarity as _ts
+        for ev in closeable:
+            sim = _ts(reply, ev.title)
+            if sim >= threshold:
+                matches.append((ev.id, round(sim, 2)))
+    except Exception:
+        # embedding 未使用時: タイトル語のキーワードマッチ
+        import re as _re
+        for ev in closeable:
+            words = set(_re.findall(r"[一-鿿ぁ-ゟ]{2,}", ev.title))
+            if words and any(w in reply for w in words):
+                matches.append((ev.id, 0.0))
+    return matches
+
+
 # ─── EventIntentClassifier ───────────────────────────────────────────────────
 
 def classify_event_intent(reply: str, speaker: str, recent_context: str,
