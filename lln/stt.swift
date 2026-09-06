@@ -34,6 +34,15 @@ guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ja-JP")) e
 let audioEngine = AVAudioEngine()
 var request: SFSpeechAudioBufferRecognitionRequest?
 var task: SFSpeechRecognitionTask?
+var silenceTimer: Timer?
+let silenceInterval: TimeInterval = 1.2  // この秒数だけ新しい発話が無ければ確定させる
+
+func resetSilenceTimer() {
+    silenceTimer?.invalidate()
+    silenceTimer = Timer.scheduledTimer(withTimeInterval: silenceInterval, repeats: false) { _ in
+        request?.endAudio()
+    }
+}
 
 func startRecognitionTask() {
     let req = SFSpeechAudioBufferRecognitionRequest()
@@ -44,9 +53,11 @@ func startRecognitionTask() {
         if let result = result {
             let text = result.bestTranscription.formattedString
             if result.isFinal {
+                silenceTimer?.invalidate()
                 printJSON(["type": "final", "text": text])
                 restartRecognitionTask()
             } else {
+                resetSilenceTimer()
                 printJSON(["type": "partial", "text": text])
             }
         }
