@@ -1,3 +1,4 @@
 stt.app/
 __pycache__/
 *.pyc
+memory/
