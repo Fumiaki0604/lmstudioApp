@@ -17,7 +17,7 @@ import time
 
 import config
 from converse import generate
-from gate import can_speak_now
+from gate import can_speak_now, in_quiet_hours
 from speak import SPEAKERS, play, synthesize
 from trigger import PROACTIVE_PROMPT
 
@@ -80,7 +80,7 @@ def reactive_loop() -> None:
             if event.get("type") != "final":
                 continue
             text = event.get("text", "").strip()
-            if not text or is_echo(text):
+            if not text or is_echo(text) or in_quiet_hours():
                 continue
 
             try:
