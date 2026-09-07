@@ -15,6 +15,7 @@ import subprocess
 import threading
 import time
 
+import config
 from converse import generate
 from gate import can_speak_now
 from speak import SPEAKERS, play, synthesize
@@ -41,10 +42,14 @@ def is_echo(text: str) -> bool:
     return ratio >= ECHO_SIMILARITY_THRESHOLD
 
 
-def speak_text(text: str, speaker: str = "rilin", style: str = None) -> None:
+def speak_text(text: str) -> None:
     global last_spoken_text
-    speaker_info = SPEAKERS[speaker]
-    style_name = style or next(iter(speaker_info["styles"]))
+    cfg = config.load()
+    if not cfg["voice_enabled"]:
+        return
+
+    speaker_info = SPEAKERS[cfg["speaker"]]
+    style_name = cfg["style"] or next(iter(speaker_info["styles"]))
     style_id = speaker_info["styles"][style_name]
 
     with speak_lock:
@@ -78,10 +83,13 @@ def reactive_loop() -> None:
             if not text or is_echo(text):
                 continue
 
-            reply = generate(text)
-            print(f"[user] {text}")
-            print(f"[reply] {reply}")
-            speak_text(reply)
+            try:
+                reply = generate(text)
+                print(f"[user] {text}")
+                print(f"[reply] {reply}")
+                speak_text(reply)
+            except Exception as e:
+                print(f"[error] reactive: {e}")
             f.seek(0, os.SEEK_END)  # 発話中に溜まった分を読み捨てる
             last_interaction_time = time.time()
 
@@ -94,9 +102,12 @@ def proactive_loop() -> None:
             continue
         if not can_speak_now():
             continue
-        text = generate(PROACTIVE_PROMPT)
-        print(f"[proactive] {text}")
-        speak_text(text)
+        try:
+            text = generate(PROACTIVE_PROMPT)
+            print(f"[proactive] {text}")
+            speak_text(text)
+        except Exception as e:
+            print(f"[error] proactive: {e}")
         last_interaction_time = time.time()
 
 

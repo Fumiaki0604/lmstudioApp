@@ -10,15 +10,13 @@ import os
 import re
 from datetime import date, datetime
 
+import config
+from memory_search import search as search_memory
+from mood import mood_instruction
 from speak import SPEAKERS, play, synthesize
 
 LMSTUDIO_URL = "http://localhost:1234/v1"
 MODEL = "qwen/qwen3.6-35b-a3b"
-
-SYSTEM_PROMPT = (
-    "あなたは音声で話しかけてくるフレンドリーなアシスタントです。"
-    "短く自然な話し言葉で、1〜2文で答えてください。"
-)
 
 MAX_HISTORY_MESSAGES = 20  # user/assistant合計の保持上限(古い分から捨てる)
 
@@ -66,29 +64,77 @@ def _load_recent_history(max_messages: int) -> list:
 history = _load_recent_history(MAX_HISTORY_MESSAGES)
 
 
+def _merge_consecutive_roles(messages: list) -> list:
+    """同じroleが連続するとLM Studioに拒否されるため、隣接する同role発言は結合する。"""
+    merged = []
+    for m in messages:
+        if merged and merged[-1]["role"] == m["role"]:
+            merged[-1]["content"] += "\n" + m["content"]
+        else:
+            merged.append(dict(m))
+    return merged
+
+
 def generate(prompt: str) -> str:
     import requests
 
     history.append({"role": "user", "content": prompt})
     _append_log("user", prompt)
 
-    res = requests.post(
-        f"{LMSTUDIO_URL}/chat/completions",
-        json={
-            "model": MODEL,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + history,
-            "temperature": 0.7,
-        },
-        timeout=60,
-    )
-    res.raise_for_status()
-    reply = res.json()["choices"][0]["message"]["content"].strip()
+    try:
+        system_prompt = config.load()["persona_prompt"]
+        mood = mood_instruction()
+        if mood:
+            system_prompt += "\n\n" + mood
+        recalled = search_memory(prompt)
+        if recalled:
+            system_prompt += "\n\n【関連する過去の記憶】\n" + "\n".join(recalled)
+
+        messages = _merge_consecutive_roles(history)
+        res = requests.post(
+            f"{LMSTUDIO_URL}/chat/completions",
+            json={
+                "model": MODEL,
+                "messages": [{"role": "system", "content": system_prompt}] + messages,
+                "temperature": 0.7,
+            },
+            timeout=60,
+        )
+        res.raise_for_status()
+        reply = res.json()["choices"][0]["message"]["content"].strip()
+    except Exception:
+        history.pop()  # 失敗した発言を履歴に残さない(次回以降の連鎖失敗を防ぐ)
+        raise
 
     history.append({"role": "assistant", "content": reply})
     _append_log("assistant", reply)
     del history[:-MAX_HISTORY_MESSAGES]
 
     return reply
+
+
+def user_impression() -> str:
+    """ユーザーへの印象を生成する。会話履歴・ログには残さない(自己言及の連鎖を防ぐ)。"""
+    import requests
+
+    context = "\n".join(f"{m['role']}: {m['content']}" for m in history[-20:])
+    res = requests.post(
+        f"{LMSTUDIO_URL}/chat/completions",
+        json={
+            "model": MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "あなたはRilinです。以下は直近の会話ログです。ユーザーについてどう思っているか、率直に1〜2文で答えてください。",
+                },
+                {"role": "user", "content": context or "(まだ会話がありません)"},
+            ],
+            "temperature": 0.7,
+        },
+        timeout=60,
+    )
+    res.raise_for_status()
+    return res.json()["choices"][0]["message"]["content"].strip()
 
 
 def main() -> None:
