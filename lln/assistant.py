@@ -16,9 +16,10 @@ import threading
 import time
 
 import config
-from converse import generate
+from converse import filler_phrase, generate
 from gate import can_speak_now, in_quiet_hours
 from speak import SPEAKERS, play, synthesize
+from tools import will_use_tools
 from trigger import PROACTIVE_PROMPT
 
 STT_APP = os.path.join(os.path.dirname(__file__), "stt.app")
@@ -100,6 +101,8 @@ def reactive_loop() -> None:
                     continue
 
             try:
+                if will_use_tools(text):
+                    speak_text(filler_phrase())
                 reply = generate(text)
                 print(f"[user] {text}")
                 print(f"[reply] {reply}")

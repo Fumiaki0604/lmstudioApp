@@ -23,6 +23,16 @@ NEWS_FEEDS = {
 
 LLN_DIR = os.path.dirname(os.path.abspath(__file__))
 VENV311_PYTHON = os.path.join(LLN_DIR, ".venv311", "bin", "python3")
+
+
+def will_use_tools(text: str) -> bool:
+    """generate()内でweather/news/twitter_contextのどれかが発火し、
+    レスポンスが遅れそうかどうかを事前に判定する(実際の取得はしない)。"""
+    return (
+        any(k in text for k in WEATHER_KEYWORDS)
+        or any(k in text for k in NEWS_KEYWORDS)
+        or any(k in text for k in TWITTER_KEYWORDS)
+    )
 TWITTER_SCRIPT = os.path.join(LLN_DIR, "twitter_context.py")
 
 # WMO weather_code -> 日本語の簡易説明

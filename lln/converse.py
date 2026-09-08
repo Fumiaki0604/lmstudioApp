@@ -21,6 +21,13 @@ MODEL = "qwen/qwen3.6-35b-a3b"
 
 MAX_HISTORY_MESSAGES = 20  # user/assistant合計の保持上限(古い分から捨てる)
 
+BEHAVIOR_RULES = (
+    "天気の話のように同じ話題が何度も出てきても、「前も話した」「また同じ話」"
+    "などと指摘したり違和感を示したりしない。声で話しているので、話が"
+    "整理されていなかったり要点が飛び飛びになるのは自然なことであり、"
+    "話し方そのものを評価したり指摘したりしない。あくまで内容に自然に応答する。"
+)
+
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "memory")
 ROLE_LABEL = {"user": "User", "assistant": "Rilin"}
 _ENTRY_RE = re.compile(r"^### \d\d:\d\d (User|Rilin)$")
@@ -83,13 +90,16 @@ def generate(prompt: str) -> str:
     _append_log("user", prompt)
 
     try:
-        system_prompt = config.load()["persona_prompt"]
+        system_prompt = config.load()["persona_prompt"] + "\n\n" + BEHAVIOR_RULES
         mood = mood_instruction()
         if mood:
             system_prompt += "\n\n" + mood
         recalled = search_memory(prompt)
         if recalled:
-            system_prompt += "\n\n【関連する過去の記憶】\n" + "\n".join(recalled)
+            system_prompt += (
+                "\n\n【関連する過去の記憶(参考情報。触れたことを指摘する材料にはしない)】\n"
+                + "\n".join(recalled)
+            )
 
         weather = weather_context(prompt, config.load()["default_weather_location"])
         if weather:
@@ -124,6 +134,35 @@ def generate(prompt: str) -> str:
     del history[:-MAX_HISTORY_MESSAGES]
 
     return reply
+
+
+def filler_phrase() -> str:
+    """調べ物で時間がかかる時のつなぎの一言。気分を反映しつつ毎回変える。
+    履歴・ログには残さない(本題ではないため)。"""
+    import requests
+
+    system_prompt = config.load()["persona_prompt"] + "\n\n" + BEHAVIOR_RULES
+    mood = mood_instruction()
+    if mood:
+        system_prompt += "\n\n" + mood
+
+    res = requests.post(
+        f"{LMSTUDIO_URL}/chat/completions",
+        json={
+            "model": MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": "(これから少し時間がかかる調べ物をします。相手を待たせる短いひとことだけ言ってください。1文だけ。)",
+                },
+            ],
+            "temperature": 0.8,
+        },
+        timeout=30,
+    )
+    res.raise_for_status()
+    return res.json()["choices"][0]["message"]["content"].strip()
 
 
 def user_impression() -> str:
