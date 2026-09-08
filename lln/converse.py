@@ -14,6 +14,7 @@ import config
 from memory_search import search as search_memory
 from mood import mood_instruction
 from speak import SPEAKERS, play, synthesize
+from tools import news_context, twitter_context, weather_context
 
 LMSTUDIO_URL = "http://localhost:1234/v1"
 MODEL = "qwen/qwen3.6-35b-a3b"
@@ -89,6 +90,18 @@ def generate(prompt: str) -> str:
         recalled = search_memory(prompt)
         if recalled:
             system_prompt += "\n\n【関連する過去の記憶】\n" + "\n".join(recalled)
+
+        weather = weather_context(prompt, config.load()["default_weather_location"])
+        if weather:
+            system_prompt += "\n\n" + weather
+
+        news = news_context(prompt)
+        if news:
+            system_prompt += "\n\n【最新ニュース見出し】\n" + news
+
+        twitter = twitter_context(prompt)
+        if twitter:
+            system_prompt += "\n\n" + twitter
 
         messages = _merge_consecutive_roles(history)
         res = requests.post(

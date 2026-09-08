@@ -25,6 +25,16 @@ STT_APP = os.path.join(os.path.dirname(__file__), "stt.app")
 LOG_PATH = os.path.join(os.path.dirname(__file__), "stt_live.log")
 ECHO_SIMILARITY_THRESHOLD = 0.5
 
+WAKE_WORDS = ("ねえ", "あのさ")  # 会話開始時にこれで始まる発話だけ本気の呼びかけとして扱う
+CONVERSATION_SESSION_SEC = 60  # この秒数以内の会話継続中はウェイクワード不要
+
+
+def strip_wake_word(text: str):
+    for w in WAKE_WORDS:
+        if text.startswith(w):
+            return text[len(w):].lstrip("、, ")
+    return None
+
 CHECK_INTERVAL_SEC = 20 * 60  # 20分おきに判定
 SILENCE_THRESHOLD_SEC = 45 * 60  # 直近45分会話が無ければ対象
 
@@ -82,6 +92,12 @@ def reactive_loop() -> None:
             text = event.get("text", "").strip()
             if not text or is_echo(text) or in_quiet_hours():
                 continue
+
+            in_session = (time.time() - last_interaction_time) < CONVERSATION_SESSION_SEC
+            if not in_session:
+                text = strip_wake_word(text)
+                if not text:
+                    continue
 
             try:
                 reply = generate(text)
