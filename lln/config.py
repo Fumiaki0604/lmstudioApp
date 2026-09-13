@@ -12,6 +12,8 @@ DEFAULTS = {
     ),
     "speaker": "rilin",
     "style": None,
+    "default_weather_location": "中目黒",
+    "user_profile": "",
 }
 
 

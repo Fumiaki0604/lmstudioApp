@@ -38,6 +38,16 @@ style = st.selectbox("スタイル", styles, index=styles.index(default_style))
 
 persona_prompt = st.text_area("ペルソナ(システムプロンプト)", value=cfg["persona_prompt"], height=150)
 
+default_weather_location = st.text_input(
+    "天気のデフォルト地点(場所を言わずに聞かれた時に使う)", value=cfg["default_weather_location"]
+)
+
+user_profile = st.text_area(
+    "ユーザープロフィール(名前・属性など、毎回そのままRilinに伝える固定情報)",
+    value=cfg["user_profile"],
+    height=100,
+)
+
 if st.button("保存", type="primary"):
     config.save(
         {
@@ -45,6 +55,8 @@ if st.button("保存", type="primary"):
             "speaker": speaker,
             "style": style,
             "persona_prompt": persona_prompt,
+            "default_weather_location": default_weather_location,
+            "user_profile": user_profile,
         }
     )
     st.success("保存しました。assistant.py実行中は次のターンから反映されます。")

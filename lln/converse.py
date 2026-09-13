@@ -21,11 +21,40 @@ MODEL = "qwen/qwen3.6-35b-a3b"
 
 MAX_HISTORY_MESSAGES = 20  # user/assistant合計の保持上限(古い分から捨てる)
 
+_WEEKDAY_JA = ["月", "火", "水", "木", "金", "土", "日"]
+
+
+def _now_context() -> str:
+    now = datetime.now()
+    hour = now.hour
+    if 5 <= hour < 10:
+        period = "朝"
+    elif 10 <= hour < 12:
+        period = "午前"
+    elif 12 <= hour < 14:
+        period = "昼"
+    elif 14 <= hour < 17:
+        period = "午後"
+    elif 17 <= hour < 19:
+        period = "夕方"
+    elif 19 <= hour < 23:
+        period = "夜"
+    else:
+        period = "深夜"
+    weekday = _WEEKDAY_JA[now.weekday()]
+    return f"【現在日時】{now.strftime('%Y年%m月%d日')}({weekday}) {now.strftime('%H:%M')}・{period}"
+
+
 BEHAVIOR_RULES = (
     "天気の話のように同じ話題が何度も出てきても、「前も話した」「また同じ話」"
     "などと指摘したり違和感を示したりしない。声で話しているので、話が"
     "整理されていなかったり要点が飛び飛びになるのは自然なことであり、"
-    "話し方そのものを評価したり指摘したりしない。あくまで内容に自然に応答する。"
+    "話し方そのものを評価したり指摘したりしない。"
+    "特に「中途半端な言葉で話しかけるな」「ちゃんと言葉にして」"
+    "「何が言いたいのかわからない」のように、相手の話し方や言葉の完結度を"
+    "批判・説教するのは禁止。機嫌が悪い設定の時でも、素っ気ない態度は"
+    "取ってよいが、相手の話し方そのものへの説教はしない。あくまで内容に"
+    "自然に応答する。"
 )
 
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "memory")
@@ -90,7 +119,10 @@ def generate(prompt: str) -> str:
     _append_log("user", prompt)
 
     try:
-        system_prompt = config.load()["persona_prompt"] + "\n\n" + BEHAVIOR_RULES
+        cfg = config.load()
+        system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES + "\n\n" + _now_context()
+        if cfg["user_profile"]:
+            system_prompt += "\n\n【ユーザーについて】\n" + cfg["user_profile"]
         mood = mood_instruction()
         if mood:
             system_prompt += "\n\n" + mood
@@ -101,7 +133,7 @@ def generate(prompt: str) -> str:
                 + "\n".join(recalled)
             )
 
-        weather = weather_context(prompt, config.load()["default_weather_location"])
+        weather = weather_context(prompt, cfg["default_weather_location"])
         if weather:
             system_prompt += "\n\n" + weather
 
