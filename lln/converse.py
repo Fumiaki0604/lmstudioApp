@@ -175,6 +175,46 @@ def generate(prompt: str) -> str:
     return reply
 
 
+def proactive_utterance(prompt: str) -> str:
+    """能動的な一言を生成する。長時間の沈黙の後に呼ばれるため、直前の
+    (古くなっていたり認識ミスの断片かもしれない)会話履歴には引っ張られず、
+    新規の話しかけとして生成する。結果は履歴・ログに残すので、その後の
+    ユーザーの反応(generate())からは通常通り参照できる。"""
+    import requests
+
+    with _history_lock:
+        cfg = config.load()
+        system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES + "\n\n" + _now_context()
+        if cfg["user_profile"]:
+            system_prompt += "\n\n【ユーザーについて】\n" + cfg["user_profile"]
+        mood = mood_instruction()
+        if mood:
+            system_prompt += "\n\n" + mood
+
+        res = requests.post(
+            f"{LMSTUDIO_URL}/chat/completions",
+            json={
+                "model": MODEL,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.8,
+            },
+            timeout=30,
+        )
+        res.raise_for_status()
+        text = res.json()["choices"][0]["message"]["content"].strip()
+
+        history.append({"role": "user", "content": prompt})
+        _append_log("user", prompt)
+        history.append({"role": "assistant", "content": text})
+        _append_log("assistant", text)
+        del history[:-MAX_HISTORY_MESSAGES]
+
+    return text
+
+
 def filler_phrase() -> str:
     """調べ物で時間がかかる時のつなぎの一言。気分を反映しつつ毎回変える。
     履歴・ログには残さない(本題ではないため)。"""

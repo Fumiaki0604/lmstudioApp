@@ -16,7 +16,7 @@ import threading
 import time
 
 import config
-from converse import filler_phrase, generate, update_user_profile
+from converse import filler_phrase, generate, proactive_utterance, update_user_profile
 from gate import can_speak_now, in_quiet_hours
 from speak import SPEAKERS, play, synthesize
 from tools import will_use_tools
@@ -132,7 +132,7 @@ def proactive_loop() -> None:
         if not can_speak_now():
             continue
         try:
-            text = generate(PROACTIVE_PROMPT)
+            text = proactive_utterance(PROACTIVE_PROMPT)
             print(f"[proactive] {text}")
             speak_text(text)
         except Exception as e:
