@@ -16,7 +16,7 @@ import threading
 import time
 
 import config
-from converse import filler_phrase, generate
+from converse import filler_phrase, generate, update_user_profile
 from gate import can_speak_now, in_quiet_hours
 from speak import SPEAKERS, play, synthesize
 from tools import will_use_tools
@@ -36,7 +36,7 @@ def strip_wake_word(text: str):
             return text[len(w):].lstrip("、, ")
     return None
 
-CHECK_INTERVAL_SEC = 20 * 60  # 20分おきに判定
+CHECK_INTERVAL_SEC = 30 * 60  # 30分おきに判定
 SILENCE_THRESHOLD_SEC = 45 * 60  # 直近45分会話が無ければ対象
 
 speak_lock = threading.Lock()
@@ -94,11 +94,12 @@ def reactive_loop() -> None:
             if not text or is_echo(text) or in_quiet_hours():
                 continue
 
-            in_session = (time.time() - last_interaction_time) < CONVERSATION_SESSION_SEC
-            if not in_session:
-                text = strip_wake_word(text)
-                if not text:
-                    continue
+            # ウェイクワード必須にすると取りこぼしが増えて反応が悪くなったため無効化。
+            # in_session = (time.time() - last_interaction_time) < CONVERSATION_SESSION_SEC
+            # if not in_session:
+            #     text = strip_wake_word(text)
+            #     if not text:
+            #         continue
 
             try:
                 if will_use_tools(text):
@@ -115,8 +116,17 @@ def reactive_loop() -> None:
 
 def proactive_loop() -> None:
     global last_interaction_time
+    last_profile_update_time = 0.0
     while True:
         time.sleep(CHECK_INTERVAL_SEC)
+
+        if not in_quiet_hours() and last_interaction_time > last_profile_update_time:
+            try:
+                update_user_profile()
+            except Exception as e:
+                print(f"[error] profile update: {e}")
+            last_profile_update_time = time.time()
+
         if time.time() - last_interaction_time < SILENCE_THRESHOLD_SEC:
             continue
         if not can_speak_now():

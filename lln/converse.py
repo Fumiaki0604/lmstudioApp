@@ -8,6 +8,7 @@ import argparse
 import glob
 import os
 import re
+import threading
 from datetime import date, datetime
 
 import config
@@ -103,6 +104,7 @@ def _load_recent_history(max_messages: int) -> list:
 
 
 history = _load_recent_history(MAX_HISTORY_MESSAGES)
+_history_lock = threading.Lock()  # generate()の追記→呼び出し→追記が他スレッドと混ざらないようにする
 
 
 def _merge_consecutive_roles(messages: list) -> list:
@@ -119,55 +121,56 @@ def _merge_consecutive_roles(messages: list) -> list:
 def generate(prompt: str) -> str:
     import requests
 
-    history.append({"role": "user", "content": prompt})
-    _append_log("user", prompt)
+    with _history_lock:
+        history.append({"role": "user", "content": prompt})
+        _append_log("user", prompt)
 
-    try:
-        cfg = config.load()
-        system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES + "\n\n" + _now_context()
-        if cfg["user_profile"]:
-            system_prompt += "\n\n【ユーザーについて】\n" + cfg["user_profile"]
-        mood = mood_instruction()
-        if mood:
-            system_prompt += "\n\n" + mood
-        recalled = search_memory(prompt)
-        if recalled:
-            system_prompt += (
-                "\n\n【関連する過去の記憶(参考情報。触れたことを指摘する材料にはしない)】\n"
-                + "\n".join(recalled)
+        try:
+            cfg = config.load()
+            system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES + "\n\n" + _now_context()
+            if cfg["user_profile"]:
+                system_prompt += "\n\n【ユーザーについて】\n" + cfg["user_profile"]
+            mood = mood_instruction()
+            if mood:
+                system_prompt += "\n\n" + mood
+            recalled = search_memory(prompt)
+            if recalled:
+                system_prompt += (
+                    "\n\n【関連する過去の記憶(参考情報。触れたことを指摘する材料にはしない)】\n"
+                    + "\n".join(recalled)
+                )
+
+            weather = weather_context(prompt, cfg["default_weather_location"])
+            if weather:
+                system_prompt += "\n\n" + weather
+
+            news = news_context(prompt)
+            if news:
+                system_prompt += "\n\n【最新ニュース見出し】\n" + news
+
+            twitter = twitter_context(prompt)
+            if twitter:
+                system_prompt += "\n\n" + twitter
+
+            messages = _merge_consecutive_roles(history)
+            res = requests.post(
+                f"{LMSTUDIO_URL}/chat/completions",
+                json={
+                    "model": MODEL,
+                    "messages": [{"role": "system", "content": system_prompt}] + messages,
+                    "temperature": 0.7,
+                },
+                timeout=60,
             )
+            res.raise_for_status()
+            reply = res.json()["choices"][0]["message"]["content"].strip()
+        except Exception:
+            history.pop()  # 失敗した発言を履歴に残さない(次回以降の連鎖失敗を防ぐ)
+            raise
 
-        weather = weather_context(prompt, cfg["default_weather_location"])
-        if weather:
-            system_prompt += "\n\n" + weather
-
-        news = news_context(prompt)
-        if news:
-            system_prompt += "\n\n【最新ニュース見出し】\n" + news
-
-        twitter = twitter_context(prompt)
-        if twitter:
-            system_prompt += "\n\n" + twitter
-
-        messages = _merge_consecutive_roles(history)
-        res = requests.post(
-            f"{LMSTUDIO_URL}/chat/completions",
-            json={
-                "model": MODEL,
-                "messages": [{"role": "system", "content": system_prompt}] + messages,
-                "temperature": 0.7,
-            },
-            timeout=60,
-        )
-        res.raise_for_status()
-        reply = res.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
-        history.pop()  # 失敗した発言を履歴に残さない(次回以降の連鎖失敗を防ぐ)
-        raise
-
-    history.append({"role": "assistant", "content": reply})
-    _append_log("assistant", reply)
-    del history[:-MAX_HISTORY_MESSAGES]
+        history.append({"role": "assistant", "content": reply})
+        _append_log("assistant", reply)
+        del history[:-MAX_HISTORY_MESSAGES]
 
     return reply
 
@@ -201,11 +204,17 @@ def filler_phrase() -> str:
     return res.json()["choices"][0]["message"]["content"].strip()
 
 
-def user_impression() -> str:
-    """ユーザーへの印象を生成する。会話履歴・ログには残さない(自己言及の連鎖を防ぐ)。"""
+def update_user_profile() -> None:
+    """会話から分かったユーザー情報を、既存プロフィールに追記・統合する。
+    設定画面で手入力した内容も尊重しつつ、新しく分かった事実だけ足す。"""
     import requests
 
+    cfg = config.load()
+    current_profile = cfg.get("user_profile", "")
     context = "\n".join(f"{m['role']}: {m['content']}" for m in history[-20:])
+    if not context:
+        return
+
     res = requests.post(
         f"{LMSTUDIO_URL}/chat/completions",
         json={
@@ -213,11 +222,62 @@ def user_impression() -> str:
             "messages": [
                 {
                     "role": "system",
-                    "content": "あなたはRilinです。以下は直近の会話ログです。ユーザーについてどう思っているか、率直に1〜2文で答えてください。",
+                    "content": (
+                        "以下は現在のユーザープロフィールと直近の会話ログです。"
+                        "会話から新たに分かったユーザーの情報(名前・仕事・好み・習慣など)が"
+                        "あれば、既存のプロフィールに追記・統合してください。矛盾する情報が"
+                        "あれば新しい方を優先してください。事実のみを簡潔な箇条書きで返して"
+                        "ください。新しく分かることが無ければ、既存のプロフィールをそのまま"
+                        "返してください。プロフィール本文以外の説明や前置きは書かないこと。"
+                    ),
                 },
-                {"role": "user", "content": context or "(まだ会話がありません)"},
+                {
+                    "role": "user",
+                    "content": f"【現在のプロフィール】\n{current_profile or '(まだ何も分かっていません)'}\n\n【直近の会話】\n{context}",
+                },
             ],
-            "temperature": 0.7,
+            "temperature": 0.3,
+        },
+        timeout=30,
+    )
+    res.raise_for_status()
+    new_profile = res.json()["choices"][0]["message"]["content"].strip()
+
+    cfg = config.load()  # 保存直前に再取得(設定画面での手動編集との競合を減らす)
+    cfg["user_profile"] = new_profile
+    config.save(cfg)
+
+
+def user_impression() -> str:
+    """ユーザーへの印象を生成する。会話履歴・ログには残さない(自己言及の連鎖を防ぐ)。
+    設定画面の表示用なので、説明口調ではなくRilin本人の口調(ペルソナ・機嫌反映)で書かせる。"""
+    import requests
+
+    cfg = config.load()
+    system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES
+    mood = mood_instruction()
+    if mood:
+        system_prompt += "\n\n" + mood
+
+    context = "\n".join(f"{m['role']}: {m['content']}" for m in history[-20:])
+    res = requests.post(
+        f"{LMSTUDIO_URL}/chat/completions",
+        json={
+            "model": MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        "(これは会話ではなく、設定画面にだけ表示する独り言です。"
+                        "以下はあなた自身の直近の会話ログです。ユーザーのことを"
+                        "今どう思っているか、いつもの自分の話し方・口調のまま、"
+                        "説明文ではなく心の声として1〜2文で言ってください。)\n\n"
+                        f"{context or '(まだ会話がありません)'}"
+                    ),
+                },
+            ],
+            "temperature": 0.8,
         },
         timeout=60,
     )
