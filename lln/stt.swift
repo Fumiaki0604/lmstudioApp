@@ -37,6 +37,18 @@ var task: SFSpeechRecognitionTask?
 var silenceTimer: Timer?
 let silenceInterval: TimeInterval = 1.2  // この秒数だけ新しい発話が無ければ確定させる
 
+var levelSum: Double = 0
+var levelCount: Int = 0
+
+func resetLevel() {
+    levelSum = 0
+    levelCount = 0
+}
+
+func averageLevel() -> Double {
+    levelCount > 0 ? levelSum / Double(levelCount) : 0
+}
+
 func resetSilenceTimer() {
     silenceTimer?.invalidate()
     silenceTimer = Timer.scheduledTimer(withTimeInterval: silenceInterval, repeats: false) { _ in
@@ -48,13 +60,14 @@ func startRecognitionTask() {
     let req = SFSpeechAudioBufferRecognitionRequest()
     req.shouldReportPartialResults = true
     request = req
+    resetLevel()
 
     task = recognizer.recognitionTask(with: req) { result, error in
         if let result = result {
             let text = result.bestTranscription.formattedString
             if result.isFinal {
                 silenceTimer?.invalidate()
-                printJSON(["type": "final", "text": text])
+                printJSON(["type": "final", "text": text, "level": averageLevel()])
                 restartRecognitionTask()
             } else {
                 resetSilenceTimer()
@@ -81,13 +94,28 @@ func restartRecognitionTask() {
     startRecognitionTask()
 }
 
-func setupAudioAndStart() {
+func installTap() {
     let inputNode = audioEngine.inputNode
     let format = inputNode.inputFormat(forBus: 0)
 
     inputNode.installTap(onBus: 0, bufferSize: 4096, format: format) { buffer, _ in
         request?.append(buffer)
+
+        if let channelData = buffer.floatChannelData?[0] {
+            let frameLength = Int(buffer.frameLength)
+            var sum: Float = 0
+            for i in 0..<frameLength {
+                sum += channelData[i] * channelData[i]
+            }
+            let rms = frameLength > 0 ? sqrt(sum / Float(frameLength)) : 0
+            levelSum += Double(rms)
+            levelCount += 1
+        }
     }
+}
+
+func setupAudioAndStart() {
+    installTap()
 
     do {
         try audioEngine.start()
@@ -98,6 +126,27 @@ func setupAudioAndStart() {
 
     startRecognitionTask()
     printJSON(["type": "state", "status": "listening"])
+
+    // ヘッドフォン接続など、入力デバイスが変わった時に自動で追従する。
+    // AVAudioEngineはデフォルトでは変化に追従しないため、これが無いと
+    // 見た目上は動いていても実際は音を拾えなくなる。
+    NotificationCenter.default.addObserver(
+        forName: .AVAudioEngineConfigurationChange, object: audioEngine, queue: nil
+    ) { _ in
+        DispatchQueue.main.async {
+            printJSON(["type": "state", "status": "reconfiguring"])
+            audioEngine.inputNode.removeTap(onBus: 0)
+            audioEngine.stop()
+            installTap()
+            do {
+                try audioEngine.start()
+                restartRecognitionTask()
+                printJSON(["type": "state", "status": "listening"])
+            } catch {
+                printJSON(["type": "error", "message": "reconfigure_failed: \(error.localizedDescription)"])
+            }
+        }
+    }
 }
 
 func requestPermissionsAndStart() {
