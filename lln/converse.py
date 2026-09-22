@@ -17,8 +17,40 @@ from mood import mood_instruction
 from speak import SPEAKERS, play, synthesize
 from tools import news_context, twitter_context, weather_context
 
-LMSTUDIO_URL = "http://localhost:1234/v1"
+LMSTUDIO_CHAT_URL = "http://localhost:1234/api/v1/chat"
 MODEL = "qwen/qwen3.6-35b-a3b"
+
+
+def _lmstudio_chat(system_prompt: str, messages: list, temperature: float = 0.7, timeout: int = 60) -> str:
+    """LM Studioの新REST API(/api/v1/chat)を叩く共通ヘルパー。
+
+    GUIの「Enable Thinking」設定はモデル再ロード時に勝手にONへ戻ることが
+    何度もあったため(プリセットに保存しても直らない)、reasoning:offを
+    毎回明示的に指定することでGUI/プリセットの状態に依存しないようにする。
+    このAPIはOpenAI形式のmessages配列を受け付けず、system_prompt文字列＋
+    input文字列という形式なので、role付きメッセージはここでフラット化する。
+    """
+    import requests
+
+    lines = []
+    for m in messages:
+        label = "User" if m["role"] == "user" else "Assistant"
+        lines.append(f"{label}: {m['content']}")
+    flattened = "\n".join(lines)
+
+    res = requests.post(
+        LMSTUDIO_CHAT_URL,
+        json={
+            "model": MODEL,
+            "system_prompt": system_prompt,
+            "input": flattened,
+            "reasoning": "off",
+            "temperature": temperature,
+        },
+        timeout=timeout,
+    )
+    res.raise_for_status()
+    return res.json()["output"][0]["content"].strip()
 
 MAX_HISTORY_MESSAGES = 20  # user/assistant合計の保持上限(古い分から捨てる)
 
@@ -119,8 +151,6 @@ def _merge_consecutive_roles(messages: list) -> list:
 
 
 def generate(prompt: str) -> str:
-    import requests
-
     with _history_lock:
         history.append({"role": "user", "content": prompt})
         _append_log("user", prompt)
@@ -153,17 +183,7 @@ def generate(prompt: str) -> str:
                 system_prompt += "\n\n" + twitter
 
             messages = _merge_consecutive_roles(history)
-            res = requests.post(
-                f"{LMSTUDIO_URL}/chat/completions",
-                json={
-                    "model": MODEL,
-                    "messages": [{"role": "system", "content": system_prompt}] + messages,
-                    "temperature": 0.7,
-                },
-                timeout=60,
-            )
-            res.raise_for_status()
-            reply = res.json()["choices"][0]["message"]["content"].strip()
+            reply = _lmstudio_chat(system_prompt, messages)
         except Exception:
             history.pop()  # 失敗した発言を履歴に残さない(次回以降の連鎖失敗を防ぐ)
             raise
@@ -180,8 +200,6 @@ def proactive_utterance(prompt: str) -> str:
     (古くなっていたり認識ミスの断片かもしれない)会話履歴には引っ張られず、
     新規の話しかけとして生成する。結果は履歴・ログに残すので、その後の
     ユーザーの反応(generate())からは通常通り参照できる。"""
-    import requests
-
     with _history_lock:
         cfg = config.load()
         system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES + "\n\n" + _now_context()
@@ -191,20 +209,9 @@ def proactive_utterance(prompt: str) -> str:
         if mood:
             system_prompt += "\n\n" + mood
 
-        res = requests.post(
-            f"{LMSTUDIO_URL}/chat/completions",
-            json={
-                "model": MODEL,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
-                "temperature": 0.8,
-            },
-            timeout=30,
+        text = _lmstudio_chat(
+            system_prompt, [{"role": "user", "content": prompt}], temperature=0.8, timeout=30
         )
-        res.raise_for_status()
-        text = res.json()["choices"][0]["message"]["content"].strip()
 
         history.append({"role": "user", "content": prompt})
         _append_log("user", prompt)
@@ -218,30 +225,22 @@ def proactive_utterance(prompt: str) -> str:
 def filler_phrase() -> str:
     """調べ物で時間がかかる時のつなぎの一言。気分を反映しつつ毎回変える。
     履歴・ログには残さない(本題ではないため)。"""
-    import requests
-
     system_prompt = config.load()["persona_prompt"] + "\n\n" + BEHAVIOR_RULES
     mood = mood_instruction()
     if mood:
         system_prompt += "\n\n" + mood
 
-    res = requests.post(
-        f"{LMSTUDIO_URL}/chat/completions",
-        json={
-            "model": MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": "(これから少し時間がかかる調べ物をします。相手を待たせる短いひとことだけ言ってください。1文だけ。)",
-                },
-            ],
-            "temperature": 0.8,
-        },
+    return _lmstudio_chat(
+        system_prompt,
+        [
+            {
+                "role": "user",
+                "content": "(これから少し時間がかかる調べ物をします。相手を待たせる短いひとことだけ言ってください。1文だけ。)",
+            }
+        ],
+        temperature=0.8,
         timeout=30,
     )
-    res.raise_for_status()
-    return res.json()["choices"][0]["message"]["content"].strip()
 
 
 _TRANSIENT_KEYWORDS = (
@@ -260,23 +259,14 @@ def update_user_profile() -> None:
     設定画面で手入力した内容も尊重しつつ、新しく分かった事実だけ足す。
     プロンプトだけでは一時的な情報(今日の体調・天気など)が混ざるのを
     防ぎきれないため、キーワードベースの事後フィルタでも弾く。"""
-    import requests
-
     cfg = config.load()
     current_profile = cfg.get("user_profile", "")
     context = "\n".join(f"{m['role']}: {m['content']}" for m in history[-20:])
     if not context:
         return
 
-    res = requests.post(
-        f"{LMSTUDIO_URL}/chat/completions",
-        json={
-            "model": MODEL,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "以下は現在のユーザープロフィールと直近の会話ログです。"
+    system_prompt = (
+        "以下は現在のユーザープロフィールと直近の会話ログです。"
                         "プロフィールに書いてよいのは、今日を過ぎても来月になっても"
                         "ずっと変わらず正しいと言える事実(名前、仕事、性格傾向、"
                         "長期的な習慣、好み)だけです。\n\n"
@@ -314,19 +304,12 @@ def update_user_profile() -> None:
                         "既存のプロフィールをそのまま返してください。事実のみを簡潔な"
                         "箇条書きで返してください。プロフィール本文以外の説明や前置きは"
                         "書かないこと。"
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": f"【現在のプロフィール】\n{current_profile or '(まだ何も分かっていません)'}\n\n【直近の会話】\n{context}",
-                },
-            ],
-            "temperature": 0.3,
-        },
-        timeout=30,
     )
-    res.raise_for_status()
-    raw_profile = res.json()["choices"][0]["message"]["content"].strip()
+    user_content = f"【現在のプロフィール】\n{current_profile or '(まだ何も分かっていません)'}\n\n【直近の会話】\n{context}"
+
+    raw_profile = _lmstudio_chat(
+        system_prompt, [{"role": "user", "content": user_content}], temperature=0.3, timeout=30
+    )
     new_profile = "\n".join(
         line for line in raw_profile.splitlines() if not _is_transient_line(line)
     ).strip()
@@ -339,8 +322,6 @@ def update_user_profile() -> None:
 def user_impression() -> str:
     """ユーザーへの印象を生成する。会話履歴・ログには残さない(自己言及の連鎖を防ぐ)。
     設定画面の表示用なので、説明口調ではなくRilin本人の口調(ペルソナ・機嫌反映)で書かせる。"""
-    import requests
-
     cfg = config.load()
     system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES
     mood = mood_instruction()
@@ -348,29 +329,16 @@ def user_impression() -> str:
         system_prompt += "\n\n" + mood
 
     context = "\n".join(f"{m['role']}: {m['content']}" for m in history[-20:])
-    res = requests.post(
-        f"{LMSTUDIO_URL}/chat/completions",
-        json={
-            "model": MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": (
-                        "(これは会話ではなく、設定画面にだけ表示する独り言です。"
-                        "以下はあなた自身の直近の会話ログです。ユーザーのことを"
-                        "今どう思っているか、いつもの自分の話し方・口調のまま、"
-                        "説明文ではなく心の声として1〜2文で言ってください。)\n\n"
-                        f"{context or '(まだ会話がありません)'}"
-                    ),
-                },
-            ],
-            "temperature": 0.8,
-        },
-        timeout=60,
+    user_content = (
+        "(これは会話ではなく、設定画面にだけ表示する独り言です。"
+        "以下はあなた自身の直近の会話ログです。ユーザーのことを"
+        "今どう思っているか、いつもの自分の話し方・口調のまま、"
+        "説明文ではなく心の声として1〜2文で言ってください。)\n\n"
+        f"{context or '(まだ会話がありません)'}"
     )
-    res.raise_for_status()
-    return res.json()["choices"][0]["message"]["content"].strip()
+    return _lmstudio_chat(
+        system_prompt, [{"role": "user", "content": user_content}], temperature=0.8, timeout=60
+    )
 
 
 def main() -> None:
