@@ -34,6 +34,7 @@ guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "ja-JP")) e
 let audioEngine = AVAudioEngine()
 var request: SFSpeechAudioBufferRecognitionRequest?
 var task: SFSpeechRecognitionTask?
+var isReconfiguring = false
 var silenceTimer: Timer?
 let silenceInterval: TimeInterval = 1.2  // この秒数だけ新しい発話が無ければ確定させる
 
@@ -86,12 +87,26 @@ func startRecognitionTask() {
     }
 }
 
+var lastRestartTime: Date = .distantPast
+
 func restartRecognitionTask() {
     task?.cancel()
     task = nil
     request?.endAudio()
     request = nil
-    startRecognitionTask()
+
+    // 何らかの理由で再起動が高頻度に連発する場合、無限ループで
+    // ログを吐き続けるのを防ぐため、最低間隔を空ける。
+    let elapsed = Date().timeIntervalSince(lastRestartTime)
+    let minInterval = 0.3
+    lastRestartTime = Date()
+    if elapsed < minInterval {
+        DispatchQueue.main.asyncAfter(deadline: .now() + (minInterval - elapsed)) {
+            startRecognitionTask()
+        }
+    } else {
+        startRecognitionTask()
+    }
 }
 
 func installTap() {
@@ -130,10 +145,18 @@ func setupAudioAndStart() {
     // ヘッドフォン接続など、入力デバイスが変わった時に自動で追従する。
     // AVAudioEngineはデフォルトでは変化に追従しないため、これが無いと
     // 見た目上は動いていても実際は音を拾えなくなる。
+    //
+    // 注意: engine.stop()/start()自体がこの通知を再度発生させることが
+    // あり、ガード無しだと無限ループになる(実際に640万行のエラーログを
+    // 吐き続けるまでハングした)。isReconfiguring フラグ+一定時間の
+    // クールダウンで再入・連鎖を防ぐ。
     NotificationCenter.default.addObserver(
         forName: .AVAudioEngineConfigurationChange, object: audioEngine, queue: nil
     ) { _ in
         DispatchQueue.main.async {
+            guard !isReconfiguring else { return }
+            isReconfiguring = true
+
             printJSON(["type": "state", "status": "reconfiguring"])
             audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
@@ -144,6 +167,12 @@ func setupAudioAndStart() {
                 printJSON(["type": "state", "status": "listening"])
             } catch {
                 printJSON(["type": "error", "message": "reconfigure_failed: \(error.localizedDescription)"])
+            }
+
+            // stop()/start()が引き起こす後続の通知が収まるまで、
+            // 少し待ってから再入を解禁する。
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                isReconfiguring = false
             }
         }
     }
