@@ -71,8 +71,14 @@ def speak_text(text: str) -> None:
 
 def reactive_loop() -> None:
     global last_interaction_time
+    # openコマンドは既に起動中のstt.appがあるとそれを使い回し、新規プロセスを
+    # 起動しない。古いインスタンスが何らかの理由でエラーループに陥っていても
+    # 気付けず居座り続けるため(実際に約23時間ハングしたまま検知されなかった)、
+    # 起動前に必ず既存プロセスを終了させ、確実に新しいプロセスへ切り替える。
+    subprocess.run(["pkill", "-f", "stt.app/Contents/MacOS/stt"])
+    time.sleep(0.5)
     open(LOG_PATH, "w").close()
-    subprocess.Popen(["open", STT_APP, "--stdout", LOG_PATH])
+    subprocess.Popen(["open", "-n", STT_APP, "--stdout", LOG_PATH])
 
     with open(LOG_PATH, "r") as f:
         while True:

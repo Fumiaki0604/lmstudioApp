@@ -5,6 +5,7 @@
     python converse.py "自己紹介して" --speaker rilin --style normal
 """
 import argparse
+import difflib
 import glob
 import os
 import re
@@ -104,6 +105,32 @@ BEHAVIOR_RULES = (
     "話し方にバリエーションを持たせる。"
 )
 
+_FALSE_REPETITION_RE = re.compile(
+    r"前も(言った|話した|似たような)|また同じ(質問|話|ネタ|こと)|前もそうだった"
+)
+
+_RETRY_NOTE = (
+    "\n\n【重要・直前の生成をやり直しています】直前の生成結果は、この会話ログに"
+    "本当には存在しない「前も言った」「また同じ話」という決めつけを含んでいたか、"
+    "直前の自分の発言とほぼ同じ内容の使い回しでした。今回は必ずその両方を避け、"
+    "今の相手の発言の内容そのものに、新しい言い回しで応答してください。"
+)
+
+
+def _is_near_duplicate(a: str, b: str) -> bool:
+    if not a or not b:
+        return False
+    return difflib.SequenceMatcher(None, a, b).ratio() >= 0.85
+
+
+def _needs_retry(reply: str, recalled: list, prev_assistant_reply: str) -> bool:
+    if _is_near_duplicate(reply, prev_assistant_reply):
+        return True
+    if _FALSE_REPETITION_RE.search(reply) and not recalled:
+        return True
+    return False
+
+
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "memory")
 ROLE_LABEL = {"user": "User", "assistant": "Rilin"}
 _ENTRY_RE = re.compile(r"^### \d\d:\d\d (User|Rilin)$")
@@ -162,6 +189,10 @@ def _merge_consecutive_roles(messages: list) -> list:
 
 def generate(prompt: str) -> str:
     with _history_lock:
+        prev_assistant_reply = next(
+            (m["content"] for m in reversed(history) if m["role"] == "assistant"), ""
+        )
+
         history.append({"role": "user", "content": prompt})
         _append_log("user", prompt)
 
@@ -194,6 +225,13 @@ def generate(prompt: str) -> str:
 
             messages = _merge_consecutive_roles(history)
             reply = _lmstudio_chat(system_prompt, messages)
+
+            # プロンプト指示だけでは「前も言った」という事実に基づかない決めつけや、
+            # 直前の発言とほぼ同一内容の使い回しを防ぎきれないことが実際に確認された
+            # ため(履歴が空でも起きる=単なる口癖)、検出時は一度だけ強い注意書きを
+            # 足して再生成する。
+            if _needs_retry(reply, recalled, prev_assistant_reply):
+                reply = _lmstudio_chat(system_prompt + _RETRY_NOTE, messages)
         except Exception:
             history.pop()  # 失敗した発言を履歴に残さない(次回以降の連鎖失敗を防ぐ)
             raise
