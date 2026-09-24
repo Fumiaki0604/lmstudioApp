@@ -106,7 +106,9 @@ BEHAVIOR_RULES = (
 )
 
 _FALSE_REPETITION_RE = re.compile(
-    r"前も(言った|話した|似たような)|また同じ(質問|話|ネタ|こと)|前もそうだった"
+    r"前も.{0,20}(じゃん|でしょ|だろ|よね)"
+    r"|さっき.{0,20}(って言った|って話した)"
+    r"|また同じ(質問|話|ネタ|こと)"
 )
 
 _RETRY_NOTE = (
@@ -123,12 +125,16 @@ def _is_near_duplicate(a: str, b: str) -> bool:
     return difflib.SequenceMatcher(None, a, b).ratio() >= 0.85
 
 
-def _needs_retry(reply: str, recalled: list, prev_assistant_reply: str) -> bool:
+def _needs_retry(reply: str, prev_assistant_reply: str) -> bool:
+    """embeddingベースのmemory_searchは緩い話題の一致でもrecalledを返すため、
+    「recalledが空でない=本当に前に話した」を判定材料にすると、日常会話的な
+    質問(「今日はどんな感じだった」等)はほぼ常に何かしら引っかかってしまい、
+    肝心の誤った決めつけを素通りさせてしまうことが実測で確認された。
+    BEHAVIOR_RULES側で「本当に既出でも指摘しない」よう別途指示しているため、
+    ここではrecalledの有無を見ずに、フレーズが出た時点で一律やり直す。"""
     if _is_near_duplicate(reply, prev_assistant_reply):
         return True
-    if _FALSE_REPETITION_RE.search(reply) and not recalled:
-        return True
-    return False
+    return bool(_FALSE_REPETITION_RE.search(reply))
 
 
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "memory")
@@ -228,10 +234,16 @@ def generate(prompt: str) -> str:
 
             # プロンプト指示だけでは「前も言った」という事実に基づかない決めつけや、
             # 直前の発言とほぼ同一内容の使い回しを防ぎきれないことが実際に確認された
-            # ため(履歴が空でも起きる=単なる口癖)、検出時は一度だけ強い注意書きを
-            # 足して再生成する。
-            if _needs_retry(reply, recalled, prev_assistant_reply):
-                reply = _lmstudio_chat(system_prompt + _RETRY_NOTE, messages)
+            # ため(履歴が空でも起きる=単なる口癖)、検出時は強い注意書きを足して
+            # 最大2回までやり直す。再生成時はhistory(=直前の汚染された発言そのもの)を
+            # そのまま見せると同じ内容を模倣し続けてしまうため、今回の発言単体だけを
+            # 渡してfew-shot的な模倣元を断つ。
+            for _ in range(2):
+                if not _needs_retry(reply, prev_assistant_reply):
+                    break
+                reply = _lmstudio_chat(
+                    system_prompt + _RETRY_NOTE, [{"role": "user", "content": prompt}]
+                )
         except Exception:
             history.pop()  # 失敗した発言を履歴に残さない(次回以降の連鎖失敗を防ぐ)
             raise
