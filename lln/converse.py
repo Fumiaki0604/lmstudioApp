@@ -12,11 +12,17 @@ import re
 import threading
 from datetime import date, datetime
 
+import requests
+
 import config
 from memory_search import search as search_memory
 from mood import mood_instruction
 from speak import SPEAKERS, play, synthesize
 from tools import news_context, twitter_context, weather_context
+
+# ---------------------------------------------------------------------------
+# LM Studio クライアント
+# ---------------------------------------------------------------------------
 
 LMSTUDIO_CHAT_URL = "http://localhost:1234/api/v1/chat"
 MODEL = "qwen/qwen3.6-35b-a3b"
@@ -35,8 +41,6 @@ def _lmstudio_chat(system_prompt: str, messages: list, temperature: float = 0.7,
     話)が続いた時に、直前の返答をほぼそのままテンプレートとして使い回す
     退化が起きることを実際に確認した(1.3指定で解消)。
     """
-    import requests
-
     lines = []
     for m in messages:
         label = "User" if m["role"] == "user" else "Assistant"
@@ -58,7 +62,10 @@ def _lmstudio_chat(system_prompt: str, messages: list, temperature: float = 0.7,
     res.raise_for_status()
     return res.json()["output"][0]["content"].strip()
 
-MAX_HISTORY_MESSAGES = 20  # user/assistant合計の保持上限(古い分から捨てる)
+
+# ---------------------------------------------------------------------------
+# 現在日時のプロンプト用テキスト
+# ---------------------------------------------------------------------------
 
 _WEEKDAY_JA = ["月", "火", "水", "木", "金", "土", "日"]
 
@@ -84,6 +91,10 @@ def _now_context() -> str:
     return f"【現在日時】{now.strftime('%Y年%m月%d日')}({weekday}) {now.strftime('%H:%M')}・{period}"
 
 
+# ---------------------------------------------------------------------------
+# ペルソナ・口調のルール
+# ---------------------------------------------------------------------------
+
 BEHAVIOR_RULES = (
     "「前も言ったでしょ」「また同じ話」「前も話したじゃん」のように相手の"
     "発言を繰り返しだと決めつけるのは、実際に上の会話ログの中に本当に"
@@ -104,6 +115,29 @@ BEHAVIOR_RULES = (
     "関係なく口癖のように文末に付け足すのは禁止。同じ表現を繰り返さず、"
     "話し方にバリエーションを持たせる。"
 )
+
+
+def _persona_system_prompt(cfg: dict, *, include_now: bool = False, include_profile: bool = False) -> str:
+    """persona_prompt+BEHAVIOR_RULESを土台に、必要な文脈だけ足したsystem_promptを作る。
+    generate/proactive_utterance/filler_phrase/user_impressionで共通の組み立て方。"""
+    system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES
+    if include_now:
+        system_prompt += "\n\n" + _now_context()
+    if include_profile and cfg["user_profile"]:
+        system_prompt += "\n\n【ユーザーについて】\n" + cfg["user_profile"]
+    mood = mood_instruction()
+    if mood:
+        system_prompt += "\n\n" + mood
+    return system_prompt
+
+
+# ---------------------------------------------------------------------------
+# 「前も言った」という事実に基づかない決めつけ・返答の使い回しを防ぐリトライガード
+#
+# BEHAVIOR_RULESのプロンプト指示だけでは、履歴が空の状態でも「前も言った
+# でしょ」が口癖のように出てしまうことが実測で確認された。事後にパターン
+# 検出して、必要なら注意書きを足して再生成する。
+# ---------------------------------------------------------------------------
 
 _FALSE_REPETITION_RE = re.compile(
     r"前も.{0,20}(じゃん|でしょ|だろ|よね)"
@@ -136,6 +170,12 @@ def _needs_retry(reply: str, prev_assistant_reply: str) -> bool:
         return True
     return bool(_FALSE_REPETITION_RE.search(reply))
 
+
+# ---------------------------------------------------------------------------
+# 会話履歴・ログの永続化
+# ---------------------------------------------------------------------------
+
+MAX_HISTORY_MESSAGES = 20  # user/assistant合計の保持上限(古い分から捨てる)
 
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "memory")
 ROLE_LABEL = {"user": "User", "assistant": "Rilin"}
@@ -182,6 +222,16 @@ history = _load_recent_history(MAX_HISTORY_MESSAGES)
 _history_lock = threading.Lock()  # generate()の追記→呼び出し→追記が他スレッドと混ざらないようにする
 
 
+def _record(role: str, text: str) -> None:
+    """historyへの追記とログへの追記をまとめて行う(generate/proactive_utterance共通)。"""
+    history.append({"role": role, "content": text})
+    _append_log(role, text)
+
+
+def _recent_context_text(n: int = MAX_HISTORY_MESSAGES) -> str:
+    return "\n".join(f"{m['role']}: {m['content']}" for m in history[-n:])
+
+
 def _merge_consecutive_roles(messages: list) -> list:
     """同じroleが連続するとLM Studioに拒否されるため、隣接する同role発言は結合する。"""
     merged = []
@@ -193,23 +243,23 @@ def _merge_consecutive_roles(messages: list) -> list:
     return merged
 
 
+# ---------------------------------------------------------------------------
+# 公開関数
+# ---------------------------------------------------------------------------
+
+
 def generate(prompt: str) -> str:
     with _history_lock:
         prev_assistant_reply = next(
             (m["content"] for m in reversed(history) if m["role"] == "assistant"), ""
         )
 
-        history.append({"role": "user", "content": prompt})
-        _append_log("user", prompt)
+        _record("user", prompt)
 
         try:
             cfg = config.load()
-            system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES + "\n\n" + _now_context()
-            if cfg["user_profile"]:
-                system_prompt += "\n\n【ユーザーについて】\n" + cfg["user_profile"]
-            mood = mood_instruction()
-            if mood:
-                system_prompt += "\n\n" + mood
+            system_prompt = _persona_system_prompt(cfg, include_now=True, include_profile=True)
+
             recalled = search_memory(prompt)
             if recalled:
                 system_prompt += (
@@ -248,8 +298,7 @@ def generate(prompt: str) -> str:
             history.pop()  # 失敗した発言を履歴に残さない(次回以降の連鎖失敗を防ぐ)
             raise
 
-        history.append({"role": "assistant", "content": reply})
-        _append_log("assistant", reply)
+        _record("assistant", reply)
         del history[:-MAX_HISTORY_MESSAGES]
 
     return reply
@@ -262,21 +311,14 @@ def proactive_utterance(prompt: str) -> str:
     ユーザーの反応(generate())からは通常通り参照できる。"""
     with _history_lock:
         cfg = config.load()
-        system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES + "\n\n" + _now_context()
-        if cfg["user_profile"]:
-            system_prompt += "\n\n【ユーザーについて】\n" + cfg["user_profile"]
-        mood = mood_instruction()
-        if mood:
-            system_prompt += "\n\n" + mood
+        system_prompt = _persona_system_prompt(cfg, include_now=True, include_profile=True)
 
         text = _lmstudio_chat(
             system_prompt, [{"role": "user", "content": prompt}], temperature=0.8, timeout=30
         )
 
-        history.append({"role": "user", "content": prompt})
-        _append_log("user", prompt)
-        history.append({"role": "assistant", "content": text})
-        _append_log("assistant", text)
+        _record("user", prompt)
+        _record("assistant", text)
         del history[:-MAX_HISTORY_MESSAGES]
 
     return text
@@ -285,10 +327,7 @@ def proactive_utterance(prompt: str) -> str:
 def filler_phrase() -> str:
     """調べ物で時間がかかる時のつなぎの一言。気分を反映しつつ毎回変える。
     履歴・ログには残さない(本題ではないため)。"""
-    system_prompt = config.load()["persona_prompt"] + "\n\n" + BEHAVIOR_RULES
-    mood = mood_instruction()
-    if mood:
-        system_prompt += "\n\n" + mood
+    system_prompt = _persona_system_prompt(config.load())
 
     return _lmstudio_chat(
         system_prompt,
@@ -314,6 +353,52 @@ def _is_transient_line(line: str) -> bool:
     return any(k in line for k in _TRANSIENT_KEYWORDS)
 
 
+_USER_PROFILE_SYSTEM_PROMPT = "\n\n".join([
+    "以下は現在のユーザープロフィールと直近の会話ログです。"
+    "プロフィールに書いてよいのは、今日を過ぎても来月になっても"
+    "ずっと変わらず正しいと言える事実(名前、仕事、性格傾向、"
+    "長期的な習慣、好み)だけです。",
+
+    "書いてはいけない例(NG): 「喉の調子が悪い」「今日は祝日」"
+    "「休み中である」「〜月〜日まで休み」「今、掃除をしている」"
+    "「食欲が無い」「雨が降っている」「さっき〜を食べた」のような、"
+    "今日・今週限定で正しい状態・体調・予定・天気・直近の出来事は"
+    "一切書かないでください。判断に迷ったら書かないことを選んで"
+    "ください。そういう情報は別の仕組みで会話ログから都度検索される"
+    "ので、ここに書く必要はありません。",
+
+    "また、会話から推測した性格・行動傾向・関係性の解釈("
+    "「〜の指示を優先する傾向がある」「〜に頼りがちである」の"
+    "ような憶測)を書くのも禁止です。書いてよいのは、本人が"
+    "明確に述べた事実(名前、仕事、誰それという人物がいる、など)"
+    "だけです。関係者について書く時も「〜という人物がいる」の"
+    "ように中立的な事実として書き、その人物との関係性や態度を"
+    "推測しないでください。",
+
+    "会話ログは音声認識(STT)を通しているため、聞き間違いが"
+    "含まれます。「〇〇です」のような自己紹介の形で明確に名乗って"
+    "いない限り、会話ログ中の単語をユーザーの名前だと推測しないで"
+    "ください(例: 挨拶の聞き間違いが人名に見えることがあります)。"
+    "また、「リリ」「リリン」はユーザーと話しているAIアシスタント"
+    "自身の名前であり、ユーザーの関係者ではありません。ユーザーの"
+    "関係者として記録しないでください。",
+
+    "STTの聞き間違いは、意味の通らない単語や短い断片として"
+    "唐突に一度だけ現れることが多いです。会話の前後関係から"
+    "見て明らかに文脈と繋がっておらず、何を指すのか判然としない"
+    "固有名詞らしき単語は、聞き間違いの可能性が高いので、"
+    "「〜という人物がいる」のような事実として記録しないでください。"
+    "はっきりと意味の通る文脈で言及された場合のみ記録してください。",
+
+    "会話から上記の意味での恒久的な事実が新たに分かった場合のみ、"
+    "既存のプロフィールに追記・統合してください。矛盾する情報が"
+    "あれば新しい方を優先してください。恒久的な事実が何も無ければ、"
+    "既存のプロフィールをそのまま返してください。事実のみを簡潔な"
+    "箇条書きで返してください。プロフィール本文以外の説明や前置きは"
+    "書かないこと。",
+])
+
+
 def update_user_profile() -> None:
     """会話から分かったユーザー情報を、既存プロフィールに追記・統合する。
     設定画面で手入力した内容も尊重しつつ、新しく分かった事実だけ足す。
@@ -321,54 +406,14 @@ def update_user_profile() -> None:
     防ぎきれないため、キーワードベースの事後フィルタでも弾く。"""
     cfg = config.load()
     current_profile = cfg.get("user_profile", "")
-    context = "\n".join(f"{m['role']}: {m['content']}" for m in history[-20:])
+    context = _recent_context_text()
     if not context:
         return
 
-    system_prompt = (
-        "以下は現在のユーザープロフィールと直近の会話ログです。"
-                        "プロフィールに書いてよいのは、今日を過ぎても来月になっても"
-                        "ずっと変わらず正しいと言える事実(名前、仕事、性格傾向、"
-                        "長期的な習慣、好み)だけです。\n\n"
-                        "書いてはいけない例(NG): 「喉の調子が悪い」「今日は祝日」"
-                        "「休み中である」「〜月〜日まで休み」「今、掃除をしている」"
-                        "「食欲が無い」「雨が降っている」「さっき〜を食べた」のような、"
-                        "今日・今週限定で正しい状態・体調・予定・天気・直近の出来事は"
-                        "一切書かないでください。判断に迷ったら書かないことを選んで"
-                        "ください。そういう情報は別の仕組みで会話ログから都度検索される"
-                        "ので、ここに書く必要はありません。\n\n"
-                        "また、会話から推測した性格・行動傾向・関係性の解釈("
-                        "「〜の指示を優先する傾向がある」「〜に頼りがちである」の"
-                        "ような憶測)を書くのも禁止です。書いてよいのは、本人が"
-                        "明確に述べた事実(名前、仕事、誰それという人物がいる、など)"
-                        "だけです。関係者について書く時も「〜という人物がいる」の"
-                        "ように中立的な事実として書き、その人物との関係性や態度を"
-                        "推測しないでください。\n\n"
-                        "会話ログは音声認識(STT)を通しているため、聞き間違いが"
-                        "含まれます。「〇〇です」のような自己紹介の形で明確に名乗って"
-                        "いない限り、会話ログ中の単語をユーザーの名前だと推測しないで"
-                        "ください(例: 挨拶の聞き間違いが人名に見えることがあります)。"
-                        "また、「リリ」「リリン」はユーザーと話しているAIアシスタント"
-                        "自身の名前であり、ユーザーの関係者ではありません。ユーザーの"
-                        "関係者として記録しないでください。\n\n"
-                        "STTの聞き間違いは、意味の通らない単語や短い断片として"
-                        "唐突に一度だけ現れることが多いです。会話の前後関係から"
-                        "見て明らかに文脈と繋がっておらず、何を指すのか判然としない"
-                        "固有名詞らしき単語は、聞き間違いの可能性が高いので、"
-                        "「〜という人物がいる」のような事実として記録しないでください。"
-                        "はっきりと意味の通る文脈で言及された場合のみ記録してください。"
-                        "\n\n"
-                        "会話から上記の意味での恒久的な事実が新たに分かった場合のみ、"
-                        "既存のプロフィールに追記・統合してください。矛盾する情報が"
-                        "あれば新しい方を優先してください。恒久的な事実が何も無ければ、"
-                        "既存のプロフィールをそのまま返してください。事実のみを簡潔な"
-                        "箇条書きで返してください。プロフィール本文以外の説明や前置きは"
-                        "書かないこと。"
-    )
     user_content = f"【現在のプロフィール】\n{current_profile or '(まだ何も分かっていません)'}\n\n【直近の会話】\n{context}"
 
     raw_profile = _lmstudio_chat(
-        system_prompt, [{"role": "user", "content": user_content}], temperature=0.3, timeout=30
+        _USER_PROFILE_SYSTEM_PROMPT, [{"role": "user", "content": user_content}], temperature=0.3, timeout=30
     )
     new_profile = "\n".join(
         line for line in raw_profile.splitlines() if not _is_transient_line(line)
@@ -382,13 +427,9 @@ def update_user_profile() -> None:
 def user_impression() -> str:
     """ユーザーへの印象を生成する。会話履歴・ログには残さない(自己言及の連鎖を防ぐ)。
     設定画面の表示用なので、説明口調ではなくRilin本人の口調(ペルソナ・機嫌反映)で書かせる。"""
-    cfg = config.load()
-    system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES
-    mood = mood_instruction()
-    if mood:
-        system_prompt += "\n\n" + mood
+    system_prompt = _persona_system_prompt(config.load())
 
-    context = "\n".join(f"{m['role']}: {m['content']}" for m in history[-20:])
+    context = _recent_context_text()
     user_content = (
         "【ここまでは参考情報としての過去の会話ログであり、続きを書く"
         "対象ではありません】\n"
