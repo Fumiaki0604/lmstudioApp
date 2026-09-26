@@ -11,6 +11,7 @@
 import difflib
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -51,6 +52,21 @@ def is_echo(text: str) -> bool:
         return True
     ratio = difflib.SequenceMatcher(None, text, last_spoken_text).ratio()
     return ratio >= ECHO_SIMILARITY_THRESHOLD
+
+
+# 独り言・環境音・短い感嘆詞(「あ」「しまった」等)には反応したくない。LLMに
+# 「これは自分への発話か」を毎回判定させると呼び出しが1回増えて反応が遅くなる
+# ため(過去に検討して速度面で見送った)、is_echo()と同じくLLMを使わない
+# 正規表現での事前フィルタで弾く。発言全体がこれらの語だけの場合のみ弾き、
+# 「雨」「子」のような短い内容語や、これらを含む文の一部は誤って弾かない。
+_MUTTER_RE = re.compile(
+    r"^(あ+ー*っ*|ああ+|あー+|えっ+|えー+|うわ+っ*|うわー+|わっ+|げっ+|お+っと|"
+    r"うーん+|んー+|はぁ+|ちっ+|くっ+|しまった|やば+い?)[!!。、\s]*$"
+)
+
+
+def is_mutter(text: str) -> bool:
+    return bool(_MUTTER_RE.match(text))
 
 
 def speak_text(text: str) -> None:
@@ -97,7 +113,7 @@ def reactive_loop() -> None:
             if event.get("type") != "final":
                 continue
             text = event.get("text", "").strip()
-            if not text or is_echo(text) or in_quiet_hours():
+            if not text or is_echo(text) or in_quiet_hours() or is_mutter(text):
                 continue
 
             # ウェイクワード必須にすると取りこぼしが増えて反応が悪くなったため無効化。
