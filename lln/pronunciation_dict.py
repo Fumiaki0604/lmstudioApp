@@ -1,11 +1,13 @@
 """COEIROINKの辞書機能(/v1/set_dictionary)に、読み間違いしやすい単語を
-あらかじめ登録する。起動時に一度呼ぶだけで、追加の推論コストは無い。
+あらかじめ登録する。登録内容はconfig.json(pronunciation_entries)で管理し、
+設定画面(settings_app.py)から編集できる。
 
 set_dictionaryは呼ぶたびに辞書全体を置き換える(差分追加ではない)ため、
-ここで一括管理する。読み間違いを見つけたらENTRIESに追記すればよい。
+毎回config上の全件を送り直す。
 """
 import requests
 
+import config
 from speak import COEIROINK_URL
 
 _SMALL_KANA = set("ゃゅょャュョ")  # 拗音は前のモーラに含まれ、独立したモーラ数にはならない
@@ -15,14 +17,12 @@ def _count_moras(yomi: str) -> int:
     return sum(1 for ch in yomi if ch not in _SMALL_KANA)
 
 
-# word: 実際の表記(漢字・ひらがな等) / yomi: 読ませたいカタカナ
-# accent: アクセント核の位置(0=平板型。核の位置が分かる場合だけ指定すればよい)
-ENTRIES = [
-    {"word": "リリン", "yomi": "リリン", "accent": 0},
-]
+def apply(entries: list = None) -> None:
+    """entriesを省略するとconfig.jsonの現在値を使う。
+    設定画面で保存直後に即反映させたい場合は、保存したentriesをそのまま渡す。"""
+    if entries is None:
+        entries = config.load()["pronunciation_entries"]
 
-
-def apply() -> None:
     dictionary_words = [
         {
             "word": e["word"],
@@ -30,7 +30,8 @@ def apply() -> None:
             "accent": e["accent"],
             "numMoras": _count_moras(e["yomi"]),
         }
-        for e in ENTRIES
+        for e in entries
+        if e.get("word") and e.get("yomi")
     ]
     requests.post(
         f"{COEIROINK_URL}/v1/set_dictionary",
@@ -40,5 +41,6 @@ def apply() -> None:
 
 
 if __name__ == "__main__":
-    apply()
-    print(f"{len(ENTRIES)}件の読みを登録しました。")
+    entries = config.load()["pronunciation_entries"]
+    apply(entries)
+    print(f"{len(entries)}件の読みを登録しました。")

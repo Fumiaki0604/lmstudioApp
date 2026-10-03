@@ -6,6 +6,7 @@
 import streamlit as st
 
 import config
+import pronunciation_dict
 from converse import user_impression
 from mood import mood_label, mood_value
 from speak import SPEAKERS
@@ -48,6 +49,22 @@ user_profile = st.text_area(
     height=100,
 )
 
+st.subheader("発音辞書(読み間違いの修正)")
+st.caption(
+    "COEIROINKが読み間違える単語を登録する。「表記」はそのまま書く言葉(漢字でもよい)、"
+    "「読み」は実際に読ませたいカタカナ。アクセント核は分からなければ0(平板)でよい。"
+)
+pronunciation_entries = st.data_editor(
+    cfg["pronunciation_entries"],
+    num_rows="dynamic",
+    column_config={
+        "word": st.column_config.TextColumn("表記"),
+        "yomi": st.column_config.TextColumn("読み(カタカナ)"),
+        "accent": st.column_config.NumberColumn("アクセント核(0=平板)", min_value=0, step=1),
+    },
+    key="pronunciation_entries_editor",
+)
+
 if st.button("保存", type="primary"):
     config.save(
         {
@@ -57,6 +74,11 @@ if st.button("保存", type="primary"):
             "persona_prompt": persona_prompt,
             "default_weather_location": default_weather_location,
             "user_profile": user_profile,
+            "pronunciation_entries": pronunciation_entries,
         }
     )
+    try:
+        pronunciation_dict.apply(pronunciation_entries)
+    except Exception as e:
+        st.warning(f"発音辞書の保存は成功しましたが、COEIROINKへの反映に失敗しました: {e}")
     st.success("保存しました。assistant.py実行中は次のターンから反映されます。")
