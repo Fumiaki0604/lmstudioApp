@@ -17,6 +17,7 @@ import threading
 import time
 
 import config
+import pronunciation_dict
 from converse import filler_phrase, generate, proactive_utterance, update_user_profile
 from gate import can_speak_now, in_quiet_hours
 from speak import SPEAKERS, play, synthesize
@@ -163,6 +164,10 @@ def proactive_loop() -> None:
 
 
 def main() -> None:
+    try:
+        pronunciation_dict.apply()
+    except Exception as e:
+        print(f"[error] pronunciation_dict: {e}")
     threading.Thread(target=proactive_loop, daemon=True).start()
     reactive_loop()
 
