@@ -80,7 +80,18 @@ func startRecognitionTask() {
             if desc.contains("cancel") || desc.contains("Cancel") {
                 // 自分でキャンセルした時の想定内エラーなので無視
             } else {
-                printJSON(["type": "error", "message": desc])
+                // "No speech detected"が異常な頻度で連発する不具合の原因調査用。
+                // localizedDescriptionだけでは毎回同じ文言にしか見えないため、
+                // エラーコード・recognizer/engineの状態も合わせて記録する。
+                let nsError = error as NSError
+                printJSON([
+                    "type": "error",
+                    "message": desc,
+                    "domain": nsError.domain,
+                    "code": nsError.code,
+                    "recognizerAvailable": recognizer.isAvailable,
+                    "engineRunning": audioEngine.isRunning,
+                ])
                 restartRecognitionTask()
             }
         }
