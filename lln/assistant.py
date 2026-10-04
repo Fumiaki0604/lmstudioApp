@@ -86,8 +86,15 @@ def speak_text(text: str) -> None:
         play(wav)
 
 
-def reactive_loop() -> None:
-    global last_interaction_time
+# stt.appが"No speech detected"を異常な頻度で吐き続ける不具合が2度実際に
+# 発生し、どちらも手動でkill+再起動するまで何時間も気付かれなかった
+# (マイクが聞こえているように見えて実際は無反応という分かりにくい症状)。
+# 根本原因はまだ特定できていないため、せめて自動検知・自動復旧できるように
+# しておく。この件数以上「final」を挟まずにエラーが連続したら再起動する。
+STT_ERROR_BURST_THRESHOLD = 30
+
+
+def _launch_stt() -> None:
     # openコマンドは既に起動中のstt.appがあるとそれを使い回し、新規プロセスを
     # 起動しない。古いインスタンスが何らかの理由でエラーループに陥っていても
     # 気付けず居座り続けるため(実際に約23時間ハングしたまま検知されなかった)、
@@ -96,6 +103,12 @@ def reactive_loop() -> None:
     time.sleep(0.5)
     open(LOG_PATH, "w").close()
     subprocess.Popen(["open", "-n", STT_APP, "--stdout", LOG_PATH])
+
+
+def reactive_loop() -> None:
+    global last_interaction_time
+    _launch_stt()
+    consecutive_errors = 0
 
     with open(LOG_PATH, "r") as f:
         while True:
@@ -111,7 +124,17 @@ def reactive_loop() -> None:
             except json.JSONDecodeError:
                 continue
 
-            if event.get("type") != "final":
+            if event.get("type") == "error":
+                consecutive_errors += 1
+                if consecutive_errors >= STT_ERROR_BURST_THRESHOLD:
+                    print(f"[warn] stt error burst detected ({consecutive_errors}件), restarting stt.app")
+                    _launch_stt()
+                    consecutive_errors = 0
+                    f.seek(0, os.SEEK_END)
+                continue
+            if event.get("type") == "final":
+                consecutive_errors = 0
+            else:
                 continue
             text = event.get("text", "").strip()
             if not text or is_echo(text) or in_quiet_hours() or is_mutter(text):
