@@ -105,13 +105,38 @@ def _launch_stt() -> None:
     subprocess.Popen(["open", "-n", STT_APP, "--stdout", LOG_PATH])
 
 
+LISTENING_CHECK_INTERVAL_SEC = 1.0  # 設定画面でのON/OFF切り替えをどれくらい早く反映するか
+
+
 def reactive_loop() -> None:
     global last_interaction_time
-    _launch_stt()
+    open(LOG_PATH, "a").close()  # stt未起動でもopen(path, "r")できるようにしておく
+    stt_running = False
     consecutive_errors = 0
+    last_listening_check = 0.0
 
     with open(LOG_PATH, "r") as f:
         while True:
+            now = time.time()
+            if now - last_listening_check >= LISTENING_CHECK_INTERVAL_SEC:
+                last_listening_check = now
+                listening_enabled = config.load()["listening_enabled"]
+                if listening_enabled and not stt_running:
+                    _launch_stt()
+                    f.seek(0, os.SEEK_END)
+                    stt_running = True
+                    consecutive_errors = 0
+                elif not listening_enabled and stt_running:
+                    # 設定画面から無効化されたら、マイク認識プロセス自体を止める。
+                    # 誤って録れた音声をログに残さないよう、認識結果→generate()への
+                    # 受け渡しを止めるだけでなく、認識プロセスごと止める。
+                    subprocess.run(["pkill", "-f", "stt.app/Contents/MacOS/stt"])
+                    stt_running = False
+
+            if not stt_running:
+                time.sleep(0.5)
+                continue
+
             line = f.readline()
             if not line:
                 time.sleep(0.2)

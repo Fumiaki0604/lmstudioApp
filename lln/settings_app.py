@@ -28,6 +28,12 @@ st.text_area("ユーザーへの印象", value=_cached_user_impression(), height
 
 cfg = config.load()
 
+listening_enabled = st.toggle("周囲の音声を拾う(マイク認識)", value=cfg["listening_enabled"])
+st.caption(
+    "オフにすると、マイクで音声認識するプロセス自体を止める(ミュートではなく認識の停止)。"
+    "この端末を自宅外に持ち出す時など、周囲の会話を拾いたくない場合はオフにする。"
+)
+
 voice_enabled = st.toggle("音声を有効にする", value=cfg["voice_enabled"])
 
 speakers = list(SPEAKERS.keys())
@@ -68,6 +74,7 @@ pronunciation_entries = st.data_editor(
 if st.button("保存", type="primary"):
     config.save(
         {
+            "listening_enabled": listening_enabled,
             "voice_enabled": voice_enabled,
             "speaker": speaker,
             "style": style,

@@ -6,6 +6,7 @@ CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
 DEFAULTS = {
     "voice_enabled": True,
+    "listening_enabled": True,
     "persona_prompt": (
         "あなたは音声で話しかけてくるフレンドリーなアシスタントです。"
         "短く自然な話し言葉で、1〜2文で答えてください。"
