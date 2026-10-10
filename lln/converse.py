@@ -228,6 +228,23 @@ def _load_recent_history(max_messages: int) -> list:
 history = _load_recent_history(MAX_HISTORY_MESSAGES)
 _history_lock = threading.Lock()  # generate()の追記→呼び出し→追記が他スレッドと混ざらないようにする
 
+# generate()が選んだ声のスタイル名。speak_text()側(assistant.py)が読み上げ時に
+# 参照する。タグが無かった/proactive_utterance・filler_phraseのようにタグ付けを
+# 求めていない発言の場合はNone(=config.jsonの固定styleにフォールバック)。
+last_reply_style = None
+
+_STYLE_TAG_RE = re.compile(r"^\[style:(normal|whisper|mesugaki|rikaisare)\]\s*\n*")
+
+_STYLE_INSTRUCTION = (
+    "\n\n返答の一番最初の行に、今回の発言の雰囲気に最も合う声のスタイルを"
+    "[style:normal] [style:whisper] [style:mesugaki] [style:rikaisare] の"
+    "いずれか一つだけで指定してください(このタグ自体は読み上げられず、声の"
+    "切り替えにだけ使われます)。normalは普段の口調、whisperは小声・内緒話・"
+    "夜中など静かに話す時、mesugakiはより生意気で強く挑発的にからかう時、"
+    "rikaisareは甘えたり陶酔したりするような雰囲気の時に使ってください。"
+    "判断に迷ったらnormalにしてください。2行目以降に本文を書いてください。"
+)
+
 
 def _record(role: str, text: str) -> None:
     """historyへの追記とログへの追記をまとめて行う(generate/proactive_utterance共通)。"""
@@ -256,6 +273,7 @@ def _merge_consecutive_roles(messages: list) -> list:
 
 
 def generate(prompt: str) -> str:
+    global last_reply_style
     with _history_lock:
         prev_assistant_reply = next(
             (m["content"] for m in reversed(history) if m["role"] == "assistant"), ""
@@ -266,6 +284,7 @@ def generate(prompt: str) -> str:
         try:
             cfg = config.load()
             system_prompt = _persona_system_prompt(cfg, include_now=True, include_profile=True)
+            system_prompt += _STYLE_INSTRUCTION
 
             recalled = search_memory(prompt)
             if recalled:
@@ -305,6 +324,13 @@ def generate(prompt: str) -> str:
             history.pop()  # 失敗した発言を履歴に残さない(次回以降の連鎖失敗を防ぐ)
             raise
 
+        m = _STYLE_TAG_RE.match(reply)
+        if m:
+            last_reply_style = m.group(1)
+            reply = _STYLE_TAG_RE.sub("", reply, count=1).strip()
+        else:
+            last_reply_style = None
+
         _record("assistant", reply)
         del history[:-MAX_HISTORY_MESSAGES]
 
@@ -316,6 +342,8 @@ def proactive_utterance(prompt: str) -> str:
     (古くなっていたり認識ミスの断片かもしれない)会話履歴には引っ張られず、
     新規の話しかけとして生成する。結果は履歴・ログに残すので、その後の
     ユーザーの反応(generate())からは通常通り参照できる。"""
+    global last_reply_style
+    last_reply_style = None  # このタグ付けはgenerate()限定なので、次の読み上げは固定styleにフォールバックさせる
     with _history_lock:
         cfg = config.load()
         system_prompt = _persona_system_prompt(cfg, include_now=True, include_profile=True)
@@ -334,6 +362,8 @@ def proactive_utterance(prompt: str) -> str:
 def filler_phrase() -> str:
     """調べ物で時間がかかる時のつなぎの一言。気分を反映しつつ毎回変える。
     履歴・ログには残さない(本題ではないため)。"""
+    global last_reply_style
+    last_reply_style = None  # このタグ付けはgenerate()限定なので、次の読み上げは固定styleにフォールバックさせる
     system_prompt = _persona_system_prompt(config.load())
 
     return _lmstudio_chat(

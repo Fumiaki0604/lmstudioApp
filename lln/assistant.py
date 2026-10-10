@@ -17,6 +17,7 @@ import threading
 import time
 
 import config
+import converse
 import pronunciation_dict
 from converse import filler_phrase, generate, proactive_utterance, update_user_profile
 from gate import can_speak_now, in_quiet_hours
@@ -77,7 +78,14 @@ def speak_text(text: str) -> None:
         return
 
     speaker_info = SPEAKERS[cfg["speaker"]]
-    style_name = cfg["style"] or next(iter(speaker_info["styles"]))
+    # generate()が会話内容に合わせて選んだスタイル(converse.last_reply_style)を
+    # 優先する。話者にそのスタイルが無い場合や、proactive/fillerなど
+    # タグ付けしていない発言ではNoneになるので、設定画面の固定styleに戻す。
+    dynamic_style = converse.last_reply_style
+    if dynamic_style in speaker_info["styles"]:
+        style_name = dynamic_style
+    else:
+        style_name = cfg["style"] or next(iter(speaker_info["styles"]))
     style_id = speaker_info["styles"][style_name]
 
     with speak_lock:
