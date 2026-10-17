@@ -45,6 +45,12 @@ SILENCE_THRESHOLD_SEC = 45 * 60  # 直近45分会話が無ければ対象
 speak_lock = threading.Lock()
 last_spoken_text = ""
 last_interaction_time = time.time()
+# speak_text()が再生を終えた時刻(reactive/proactive共通)。reactive_loop側は
+# この値が進んだら、マイクが拾ったかもしれない自分の声の残響をis_echo()の
+# 内容一致に頼らず確実に読み捨てる。proactive発話は別スレッドで再生されるため、
+# reactive_loop自身の`speak_text()`呼び出し直後にだけ読み捨てていた従来の
+# 仕組みでは、proactiveの自己エコーを取りこぼすことがあった。
+last_speak_end_time = 0.0
 
 
 def is_echo(text: str) -> bool:
@@ -72,7 +78,7 @@ def is_mutter(text: str) -> bool:
 
 
 def speak_text(text: str) -> None:
-    global last_spoken_text
+    global last_spoken_text, last_speak_end_time
     cfg = config.load()
     if not cfg["voice_enabled"]:
         return
@@ -92,6 +98,7 @@ def speak_text(text: str) -> None:
         last_spoken_text = text
         wav = synthesize(text, speaker_info["uuid"], style_id)
         play(wav)
+        last_speak_end_time = time.time()
 
 
 # stt.appが"No speech detected"を異常な頻度で吐き続ける不具合が2度実際に
@@ -122,9 +129,20 @@ def reactive_loop() -> None:
     stt_running = False
     consecutive_errors = 0
     last_listening_check = 0.0
+    seen_speak_end_time = last_speak_end_time
 
     with open(LOG_PATH, "r") as f:
         while True:
+            if last_speak_end_time != seen_speak_end_time:
+                # reactive/proactiveどちらかが発話を終えた直後。マイクが拾った
+                # かもしれない自分の声の残響を、内容一致の判定に頼らず確実に
+                # 読み捨てる。再生終了直後は余韻が録れきっていないこともある
+                # ため、少し待ってからシークする。
+                seen_speak_end_time = last_speak_end_time
+                time.sleep(0.3)
+                f.seek(0, os.SEEK_END)
+                continue
+
             now = time.time()
             if now - last_listening_check >= LISTENING_CHECK_INTERVAL_SEC:
                 last_listening_check = now
@@ -189,7 +207,8 @@ def reactive_loop() -> None:
                 speak_text(reply)
             except Exception as e:
                 print(f"[error] reactive: {e}")
-            f.seek(0, os.SEEK_END)  # 発話中に溜まった分を読み捨てる
+            # 発話中に溜まった分の読み捨ては、ループ先頭のlast_speak_end_time
+            # チェックが次の周回で自動的に行う(proactiveと共通の仕組み)。
             last_interaction_time = time.time()
 
 
