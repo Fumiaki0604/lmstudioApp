@@ -53,11 +53,34 @@ last_interaction_time = time.time()
 last_speak_end_time = 0.0
 
 
+ECHO_FRAGMENT_COVERAGE = 0.75  # 聞き取った内容のうち、これ以上の割合が直前の
+                                # 発言の一部として説明できれば自己エコーとみなす
+ECHO_FRAGMENT_MIN_LEN = 6  # 短すぎる一致での誤判定(偶然の単語一致)を避ける下限
+
+
+def _echo_fragment_coverage(text: str, reference: str) -> float:
+    """「聞き取った内容の何%が、直前に自分で言った内容の一部として説明できるか」
+    を返す。ratio()は比較対象2つの長さの違いに弱く、長い返答の末尾だけを正確に
+    拾った短い聞き取り結果が、長さの差だけで低スコアになり素通りすることが
+    実際に確認された(例:長い返答の最後の一文だけを拾ったケース)。
+    get_matching_blocks()で一致箇所を全て合算することで、句読点などで一致が
+    分断されていても正しくカバー率を測れるようにする。"""
+    if not text:
+        return 0.0
+    matcher = difflib.SequenceMatcher(None, text, reference)
+    matched = sum(block.size for block in matcher.get_matching_blocks())
+    return matched / len(text)
+
+
 def is_echo(text: str) -> bool:
     if not last_spoken_text:
         return False
     if text in last_spoken_text or last_spoken_text in text:
         return True
+    if len(text) >= ECHO_FRAGMENT_MIN_LEN:
+        coverage = _echo_fragment_coverage(text, last_spoken_text)
+        if coverage >= ECHO_FRAGMENT_COVERAGE:
+            return True
     ratio = difflib.SequenceMatcher(None, text, last_spoken_text).ratio()
     return ratio >= ECHO_SIMILARITY_THRESHOLD
 
