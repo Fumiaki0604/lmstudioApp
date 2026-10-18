@@ -12,6 +12,7 @@ import re
 import threading
 from datetime import date, datetime
 
+import jpholiday
 import requests
 
 import config
@@ -91,7 +92,22 @@ def _now_context() -> str:
     else:
         period = "深夜"
     weekday = _WEEKDAY_JA[now.weekday()]
-    return f"【現在日時】{now.strftime('%Y年%m月%d日')}({weekday}) {now.strftime('%H:%M')}・{period}"
+
+    # 祝日判定(秋分・春分など年ごとに日付が動くものを含む)は自前で計算すると
+    # 間違えやすいため、jpholidayライブラリに委ねる。土日かどうかだけなら
+    # weekday()で判定できるが、祝日の方が優先度が高い情報なので先に見る。
+    holiday_name = jpholiday.is_holiday_name(now.date())
+    if holiday_name:
+        day_type = f"祝日・{holiday_name}"
+    elif now.weekday() >= 5:  # 5=土, 6=日
+        day_type = "休日(土日)"
+    else:
+        day_type = "平日"
+
+    return (
+        f"【現在日時】{now.strftime('%Y年%m月%d日')}({weekday}・{day_type}) "
+        f"{now.strftime('%H:%M')}・{period}"
+    )
 
 
 # ---------------------------------------------------------------------------
