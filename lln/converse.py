@@ -1,4 +1,4 @@
-"""LM Studio でテキストを生成し、COEIROINKv2 で発話するテスト用スクリプト。
+"""Splash でテキストを生成し、COEIROINKv2 で発話するテスト用スクリプト。
 
 使い方:
     python converse.py "今日のニュースについて一言"
@@ -525,7 +525,7 @@ def main() -> None:
     style_id = speaker["styles"][style_name]
 
     text = generate(args.prompt)
-    print(f"[LM Studio] {text}")
+    print(f"[Rilin] {text}")
 
     wav_bytes = synthesize(text, speaker["uuid"], style_id)
     play(wav_bytes)
