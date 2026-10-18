@@ -9,7 +9,6 @@ import config
 import pronunciation_dict
 from converse import user_impression
 from mood import mood_label, mood_value
-from speak import SPEAKERS
 
 st.set_page_config(page_title="Rilin設定")
 st.title("Rilin 設定")
@@ -36,12 +35,11 @@ st.caption(
 
 voice_enabled = st.toggle("音声を有効にする", value=cfg["voice_enabled"])
 
-speakers = list(SPEAKERS.keys())
-speaker = st.selectbox("話者", speakers, index=speakers.index(cfg["speaker"]))
-
-styles = list(SPEAKERS[speaker]["styles"].keys())
-default_style = cfg["style"] if cfg["style"] in styles else styles[0]
-style = st.selectbox("スタイル", styles, index=styles.index(default_style))
+# 話者・スタイルの手動選択は非表示にした。generate()が会話内容に応じて
+# スタイルを動的に選ぶようになったため、UI上の固定選択は不要との判断。
+# 値自体はconfigにそのまま残し、フォールバック用として使い続ける。
+speaker = cfg["speaker"]
+style = cfg["style"]
 
 persona_prompt = st.text_area("ペルソナ(システムプロンプト)", value=cfg["persona_prompt"], height=150)
 
