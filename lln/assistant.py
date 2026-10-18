@@ -21,6 +21,7 @@ import converse
 import pronunciation_dict
 from converse import filler_phrase, generate, proactive_utterance, update_user_profile
 from gate import can_speak_now, in_quiet_hours
+from memory_search import update_interest_scores
 from speak import SPEAKERS, play, synthesize
 from tools import will_use_tools
 from trigger import PROACTIVE_PROMPT
@@ -246,6 +247,10 @@ def proactive_loop() -> None:
                 update_user_profile()
             except Exception as e:
                 print(f"[error] profile update: {e}")
+            try:
+                update_interest_scores()
+            except Exception as e:
+                print(f"[error] interest scoring: {e}")
             last_profile_update_time = time.time()
 
         if time.time() - last_interaction_time < SILENCE_THRESHOLD_SEC:

@@ -5,6 +5,14 @@ lmstudioApp の embedding.py と同じモデル(GLuCoSE-base-ja、日本語特�
 日付ファイルは一度全件キャッシュしたら二度と読み返さない
 (scanned_days に記録)。読み返すのは today のファイルだけなので、
 履歴が長くなっても毎回のコストは増えない。
+
+検索対象は「興味度TOP5(リリン視点でLLM採点)＋直近15件」の計20件に絞った
+作業セットのみ。直近だけど瑣末な話題(お風呂入る・もう寝る等)が意味的に
+近いというだけで埋もれさせず、逆に少し前でも興味を持った話題は拾い続ける
+ための仕組み。全件(数百件)と毎回比較するより候補が絞られる分、検索自体は
+むしろ速くなる。興味度の採点はLLM呼び出しを伴うため、検索のたび(=会話の
+たび)には行わず、assistant.pyのproactive_loopから低頻度(30分おき等)で
+update_interest_scores()を呼ぶ想定。
 """
 import glob
 import json
@@ -15,6 +23,14 @@ from datetime import date
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "memory")
 CACHE_PATH = os.path.join(MEMORY_DIR, ".embeddings.json")
 MODEL_NAME = "pkshatech/GLuCoSE-base-ja"
+
+# converse.pyがmemory_search.pyをimportしているため、循環import回避のため
+# LLM接続先はconverse.pyから共有せずここで独立に持つ(値は重複するが許容)。
+LLM_CHAT_URL = "http://127.0.0.1:8000/v1/chat/completions"
+LLM_MODEL = "mlx-community/Qwen3.6-35B-A3B-4bit"
+
+WORKING_SET_INTEREST_N = 5
+WORKING_SET_RECENT_N = 15
 
 _ENTRY_RE = re.compile(r"^### (\d\d:\d\d) (User|Rilin)$")
 
@@ -94,6 +110,25 @@ def _update_index() -> dict:
     return entries
 
 
+def _select_working_set(entries: dict) -> dict:
+    """検索対象を興味度TOP5+直近15件の計20件に絞る。
+    keyは"day_HH:MM_role"形式でISO日付+ゼロ埋め時刻のため、文字列として
+    降順ソートするだけで新しい順になる(専用のタイムスタンプ不要)。"""
+    newest_first = sorted(entries.items(), key=lambda kv: kv[0], reverse=True)
+
+    scored = [kv for kv in newest_first if kv[1].get("interest") is not None]
+    scored.sort(key=lambda kv: -kv[1]["interest"])  # 安定ソートなので同点は新しい順を維持
+    top_interest = scored[:WORKING_SET_INTEREST_N]
+    top_interest_keys = {k for k, _ in top_interest}
+
+    remaining = [kv for kv in newest_first if kv[0] not in top_interest_keys]
+    top_recent = remaining[:WORKING_SET_RECENT_N]
+
+    working = dict(top_interest)
+    working.update(top_recent)
+    return working
+
+
 def search(query: str, top_k: int = 3, min_score: float = 0.5):
     import numpy as np
 
@@ -101,11 +136,13 @@ def search(query: str, top_k: int = 3, min_score: float = 0.5):
     if not entries:
         return []
 
+    working = _select_working_set(entries)
+
     model = _get_model()
     q_vec = np.array(model.encode([query])[0])
 
     scored = []
-    for item in entries.values():
+    for item in working.values():
         v = np.array(item["vector"])
         denom = np.linalg.norm(q_vec) * np.linalg.norm(v) + 1e-9
         score = float(np.dot(q_vec, v) / denom)
@@ -113,3 +150,61 @@ def search(query: str, top_k: int = 3, min_score: float = 0.5):
     scored.sort(key=lambda x: -x[0])
 
     return [text for score, text in scored[:top_k] if score >= min_score]
+
+
+def update_interest_scores() -> None:
+    """未採点のキャッシュ済みエントリに対し、リリン視点の「興味度」(0〜10)を
+    LLMでまとめて判定し、キャッシュに書き込む。LLM呼び出しを伴うため検索時
+    (=会話のたび)には呼ばず、assistant.pyのproactive_loopから低頻度で
+    呼ぶことを想定している。"""
+    import requests
+
+    cache = _load_cache()
+    entries = cache["entries"]
+    unscored = {k: v for k, v in entries.items() if "interest" not in v}
+    if not unscored:
+        return
+
+    keys = list(unscored.keys())
+    numbered = "\n".join(f"{i + 1}. {unscored[k]['text'][:200]}" for i, k in enumerate(keys))
+
+    system_prompt = (
+        "あなたは「リリン」というキャラクターです。以下は過去の会話ログの"
+        "一部です。それぞれの発言について、リリン自身の視点で「この話題に"
+        "どれくらい興味を持ったか」を0〜10の整数で判定してください。\n\n"
+        "「お風呂に入る」「もう夜だから寝る」のような定型的な生活ルーティン"
+        "の報告は低く(0〜2程度)評価してください。新しい趣味の話、相手の"
+        "悩み相談、強い感情が伴う出来事、継続して話題になりそうな固有名詞"
+        "(プロジェクト名など)は高く評価してください。\n\n"
+        "出力は「番号: 点数」の形式で1行に1つずつ、他の説明は書かずに"
+        "返してください。"
+    )
+    try:
+        res = requests.post(
+            LLM_CHAT_URL,
+            json={
+                "model": LLM_MODEL,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": numbered},
+                ],
+                "reasoning_effort": "none",
+                "temperature": 0.2,
+            },
+            timeout=60,
+        )
+        res.raise_for_status()
+        raw = res.json()["choices"][0]["message"]["content"]
+    except Exception:
+        return  # 採点に失敗しても検索自体は(興味度無し=直近枠のみ扱いで)動き続けられる
+
+    score_re = re.compile(r"^\s*(\d+)\s*[:：]\s*(\d+)")
+    for line in raw.splitlines():
+        m = score_re.match(line)
+        if not m:
+            continue
+        idx, score = int(m.group(1)) - 1, int(m.group(2))
+        if 0 <= idx < len(keys):
+            entries[keys[idx]]["interest"] = max(0, min(10, score))
+
+    _save_cache(cache)
