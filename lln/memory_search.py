@@ -154,40 +154,17 @@ def search(query: str, top_k: int = 3, min_score: float = 0.5):
     return [text for score, text in scored[:top_k] if score >= min_score]
 
 
-def _refresh_top_interest_scores(entries: dict) -> None:
-    """機械的な時間減衰や登場回数ではなく、リリン自身に「今振り返っても
-    まだ興味があるか」を定期的に再判断させる。スイーツのように世の中の
-    方で話題が次々入れ替わるジャンルは、リリンが今も関心を持ち続けて
-    いれば高いままでよく、単に日数が経ったというだけで機械的には下げない。
-    対象は現在の興味度上位勢(WORKING_SET_INTEREST_N件)のみに絞り、全件を
-    毎回問い合わせるコストを避ける。"""
+_SCORE_LINE_RE = re.compile(r"^\s*(\d+)\s*[:：]\s*(\d+)")
+
+
+def _llm_interest_scores(system_prompt: str, items: list) -> dict:
+    """「番号: 点数」形式で0〜10点を付けさせる採点呼び出しの共通処理。
+    itemsのインデックス(0始まり)→採点結果のdictを返す。採点自体に失敗
+    したり、一部の番号が出力されなかった場合は、該当分だけ結果に含まれない
+    (呼び出し側は既存スコアをそのまま維持すればよい)。"""
     import requests
 
-    scored = [(k, v) for k, v in entries.items() if v.get("interest") is not None]
-    scored.sort(key=lambda kv: -kv[1]["interest"])
-    top = scored[:WORKING_SET_INTEREST_N]
-    if not top:
-        return
-
-    today = date.today().isoformat()
-    numbered = "\n".join(
-        f"{i + 1}. (前回採点:{v['interest']}点 / {k.split('_', 1)[0]}時点) {v['text'][:200]}"
-        for i, (k, v) in enumerate(top)
-    )
-
-    system_prompt = (
-        f"あなたは「リリン」というキャラクターです。今日の日付は{today}です。"
-        "以下は、これまでリリンが特に興味を持ったと判定された話題です。"
-        "時間が経った今あらためて振り返って、まだ同じくらい興味があるかを"
-        "あなた自身の判断で0〜10に採点し直してください。\n\n"
-        "スイーツや流行りものなど、世の中で中身が次々入れ替わっていく"
-        "ジャンルでも、そのジャンル自体への関心が続いているなら高いまま"
-        "でよく、単に日数が経ったという理由だけで機械的に下げないで"
-        "ください。逆に、今思い返すとそれほどでもなかった、もう気分が"
-        "乗らないと思うなら素直に下げてください。\n\n"
-        "出力は「番号: 点数」の形式で1行に1つずつ、他の説明は書かずに"
-        "返してください。"
-    )
+    numbered = "\n".join(f"{i + 1}. {item}" for i, item in enumerate(items))
     try:
         res = requests.post(
             LLM_CHAT_URL,
@@ -205,17 +182,53 @@ def _refresh_top_interest_scores(entries: dict) -> None:
         res.raise_for_status()
         raw = res.json()["choices"][0]["message"]["content"]
     except Exception:
-        return  # 再判断に失敗しても既存スコアのままでよい(更新しないだけ)
+        return {}
 
-    score_re = re.compile(r"^\s*(\d+)\s*[:：]\s*(\d+)")
-    keys = [k for k, _ in top]
+    results = {}
     for line in raw.splitlines():
-        m = score_re.match(line)
+        m = _SCORE_LINE_RE.match(line)
         if not m:
             continue
         idx, score = int(m.group(1)) - 1, int(m.group(2))
-        if 0 <= idx < len(keys):
-            entries[keys[idx]]["interest"] = max(0, min(10, score))
+        if 0 <= idx < len(items):
+            results[idx] = max(0, min(10, score))
+    return results
+
+
+def _refresh_top_interest_scores(entries: dict) -> None:
+    """機械的な時間減衰や登場回数ではなく、リリン自身に「今振り返っても
+    まだ興味があるか」を定期的に再判断させる。スイーツのように世の中の
+    方で話題が次々入れ替わるジャンルは、リリンが今も関心を持ち続けて
+    いれば高いままでよく、単に日数が経ったというだけで機械的には下げない。
+    対象は現在の興味度上位勢(WORKING_SET_INTEREST_N件)のみに絞り、全件を
+    毎回問い合わせるコストを避ける。"""
+    scored = [(k, v) for k, v in entries.items() if v.get("interest") is not None]
+    scored.sort(key=lambda kv: -kv[1]["interest"])
+    top = scored[:WORKING_SET_INTEREST_N]
+    if not top:
+        return
+
+    today = date.today().isoformat()
+    items = [
+        f"(前回採点:{v['interest']}点 / {k.split('_', 1)[0]}時点) {v['text'][:200]}"
+        for k, v in top
+    ]
+    system_prompt = (
+        f"あなたは「リリン」というキャラクターです。今日の日付は{today}です。"
+        "以下は、これまでリリンが特に興味を持ったと判定された話題です。"
+        "時間が経った今あらためて振り返って、まだ同じくらい興味があるかを"
+        "あなた自身の判断で0〜10に採点し直してください。\n\n"
+        "スイーツや流行りものなど、世の中で中身が次々入れ替わっていく"
+        "ジャンルでも、そのジャンル自体への関心が続いているなら高いまま"
+        "でよく、単に日数が経ったという理由だけで機械的に下げないで"
+        "ください。逆に、今思い返すとそれほどでもなかった、もう気分が"
+        "乗らないと思うなら素直に下げてください。\n\n"
+        "出力は「番号: 点数」の形式で1行に1つずつ、他の説明は書かずに"
+        "返してください。"
+    )
+    keys = [k for k, _ in top]
+    for idx, score in _llm_interest_scores(system_prompt, items).items():
+        entries[keys[idx]]["interest"] = score
 
 
 def update_interest_scores() -> None:
@@ -224,15 +237,11 @@ def update_interest_scores() -> None:
     (=会話のたび)には呼ばず、assistant.pyのproactive_loopから低頻度で
     呼ぶことを想定している。未採点エントリの新規採点と、既存の上位勢の
     再判断(_refresh_top_interest_scores参照)の両方を行う。"""
-    import requests
-
     cache = _load_cache()
     entries = cache["entries"]
     unscored = {k: v for k, v in entries.items() if "interest" not in v}
     if unscored:
         keys = list(unscored.keys())
-        numbered = "\n".join(f"{i + 1}. {unscored[k]['text'][:200]}" for i, k in enumerate(keys))
-
         system_prompt = (
             "あなたは「リリン」というキャラクターです。以下は過去の会話ログの"
             "一部です。それぞれの発言について、リリン自身の視点で「この話題に"
@@ -244,34 +253,9 @@ def update_interest_scores() -> None:
             "出力は「番号: 点数」の形式で1行に1つずつ、他の説明は書かずに"
             "返してください。"
         )
-        try:
-            res = requests.post(
-                LLM_CHAT_URL,
-                json={
-                    "model": LLM_MODEL,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": numbered},
-                    ],
-                    "reasoning_effort": "none",
-                    "temperature": 0.2,
-                },
-                timeout=60,
-            )
-            res.raise_for_status()
-            raw = res.json()["choices"][0]["message"]["content"]
-        except Exception:
-            raw = None  # 採点に失敗しても既存の採点済み分は動き続けられる
-
-        if raw:
-            score_re = re.compile(r"^\s*(\d+)\s*[:：]\s*(\d+)")
-            for line in raw.splitlines():
-                m = score_re.match(line)
-                if not m:
-                    continue
-                idx, score = int(m.group(1)) - 1, int(m.group(2))
-                if 0 <= idx < len(keys):
-                    entries[keys[idx]]["interest"] = max(0, min(10, score))
+        items = [unscored[k]["text"][:200] for k in keys]
+        for idx, score in _llm_interest_scores(system_prompt, items).items():
+            entries[keys[idx]]["interest"] = score
 
     _refresh_top_interest_scores(entries)
     _save_cache(cache)
