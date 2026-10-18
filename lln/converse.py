@@ -21,46 +21,49 @@ from speak import SPEAKERS, play, synthesize
 from tools import news_context, twitter_context, weather_context
 
 # ---------------------------------------------------------------------------
-# LM Studio クライアント
+# LLM クライアント(Splash)
 # ---------------------------------------------------------------------------
+#
+# 以前はLM Studioの独自API(/api/v1/chat、system_prompt+input文字列形式)を
+# 使っていたが、Apple Silicon向けに最適化された推論エンジンSplash導入に伴い、
+# 標準的なOpenAI Chat Completions形式(/v1/chat/completions、messages配列)
+# へ切り替えた。ベンチマークでLM Studio比TTFTが約6倍(約200ms→35ms)高速化
+# したことを確認済み。LM Studio自体は併存させており(他プロジェクトから
+# 引き続き使用)、ポートが別(1234 vs 8000)なので競合しない。
 
-LMSTUDIO_CHAT_URL = "http://localhost:1234/api/v1/chat"
-MODEL = "qwen/qwen3.6-35b-a3b"
+LLM_CHAT_URL = "http://127.0.0.1:8000/v1/chat/completions"
+MODEL = "mlx-community/Qwen3.6-35B-A3B-4bit"
 
 
-def _lmstudio_chat(system_prompt: str, messages: list, temperature: float = 0.7, timeout: int = 60) -> str:
-    """LM Studioの新REST API(/api/v1/chat)を叩く共通ヘルパー。
+def _llm_chat(system_prompt: str, messages: list, temperature: float = 0.7, timeout: int = 60) -> str:
+    """Splash(OpenAI互換API)を叩く共通ヘルパー。
 
-    GUIの「Enable Thinking」設定はモデル再ロード時に勝手にONへ戻ることが
-    何度もあったため(プリセットに保存しても直らない)、reasoning:offを
-    毎回明示的に指定することでGUI/プリセットの状態に依存しないようにする。
-    このAPIはOpenAI形式のmessages配列を受け付けず、system_prompt文字列＋
-    input文字列という形式なので、role付きメッセージはここでフラット化する。
+    reasoning_effort:"none"でreasoningを明示的に無効化する(LM Studio時代の
+    reasoning:offと同じ目的)。LM StudioのGUI依存の「Enable Thinking」設定
+    トグルが勝手に戻る問題を避けるため元々この方式にした経緯があり、Splashは
+    GUIを持たないサーバーなのでそもそもその種の問題は起きないはずだが、
+    念のため引き続き毎回明示指定する。
 
-    repeat_penaltyも明示指定する。指定しないと、似た内容の発言(例:天気の
+    repetition_penaltyも明示指定する。指定しないと、似た内容の発言(例:天気の
     話)が続いた時に、直前の返答をほぼそのままテンプレートとして使い回す
-    退化が起きることを実際に確認した(1.3指定で解消)。
+    退化が起きることを実際に確認した(LM Studio時代にrepeat_penalty:1.3で
+    解消済み。Splashでの対応パラメータ名はrepetition_penalty)。
     """
-    lines = []
-    for m in messages:
-        label = "User" if m["role"] == "user" else "Assistant"
-        lines.append(f"{label}: {m['content']}")
-    flattened = "\n".join(lines)
+    full_messages = [{"role": "system", "content": system_prompt}] + messages
 
     res = requests.post(
-        LMSTUDIO_CHAT_URL,
+        LLM_CHAT_URL,
         json={
             "model": MODEL,
-            "system_prompt": system_prompt,
-            "input": flattened,
-            "reasoning": "off",
+            "messages": full_messages,
+            "reasoning_effort": "none",
             "temperature": temperature,
-            "repeat_penalty": 1.3,
+            "repetition_penalty": 1.3,
         },
         timeout=timeout,
     )
     res.raise_for_status()
-    return res.json()["output"][0]["content"].strip()
+    return res.json()["choices"][0]["message"]["content"].strip()
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +236,12 @@ _history_lock = threading.Lock()  # generate()の追記→呼び出し→追記�
 # 求めていない発言の場合はNone(=config.jsonの固定styleにフォールバック)。
 last_reply_style = None
 
-_STYLE_TAG_RE = re.compile(r"^\[style:(normal|whisper|mesugaki|rikaisare)\]\s*\n*")
+_VALID_STYLES = {"normal", "whisper", "mesugaki", "rikaisare"}
+# モデルが稀にスタイル名を打ち間違える(例: 「mesugaki」を「mesugaku」)ことが
+# 実際に確認され、厳密な列挙限定の正規表現だとマッチせずタグがそのまま読み
+# 上げられてしまっていた。タグの形自体は緩く拾い、値の正規化はコード側で
+# 行うことで、スペルミスでも必ずタグだけは本文から除去されるようにする。
+_STYLE_TAG_RE = re.compile(r"^\[style:(\w+)\]\s*\n*")
 
 _STYLE_INSTRUCTION = (
     "\n\n返答の一番最初の行に、今回の発言の雰囲気に最も合う声のスタイルを"
@@ -306,7 +314,7 @@ def generate(prompt: str) -> str:
                 system_prompt += "\n\n" + twitter
 
             messages = _merge_consecutive_roles(history)
-            reply = _lmstudio_chat(system_prompt, messages)
+            reply = _llm_chat(system_prompt, messages)
 
             # プロンプト指示だけでは「前も言った」という事実に基づかない決めつけや、
             # 直前の発言とほぼ同一内容の使い回しを防ぎきれないことが実際に確認された
@@ -317,7 +325,7 @@ def generate(prompt: str) -> str:
             for _ in range(2):
                 if not _needs_retry(reply, prev_assistant_reply):
                     break
-                reply = _lmstudio_chat(
+                reply = _llm_chat(
                     system_prompt + _RETRY_NOTE, [{"role": "user", "content": prompt}]
                 )
         except Exception:
@@ -326,7 +334,8 @@ def generate(prompt: str) -> str:
 
         m = _STYLE_TAG_RE.match(reply)
         if m:
-            last_reply_style = m.group(1)
+            tag_value = m.group(1)
+            last_reply_style = tag_value if tag_value in _VALID_STYLES else None
             reply = _STYLE_TAG_RE.sub("", reply, count=1).strip()
         else:
             last_reply_style = None
@@ -348,7 +357,7 @@ def proactive_utterance(prompt: str) -> str:
         cfg = config.load()
         system_prompt = _persona_system_prompt(cfg, include_now=True, include_profile=True)
 
-        text = _lmstudio_chat(
+        text = _llm_chat(
             system_prompt, [{"role": "user", "content": prompt}], temperature=0.8, timeout=30
         )
 
@@ -366,7 +375,7 @@ def filler_phrase() -> str:
     last_reply_style = None  # このタグ付けはgenerate()限定なので、次の読み上げは固定styleにフォールバックさせる
     system_prompt = _persona_system_prompt(config.load())
 
-    return _lmstudio_chat(
+    return _llm_chat(
         system_prompt,
         [
             {
@@ -449,7 +458,7 @@ def update_user_profile() -> None:
 
     user_content = f"【現在のプロフィール】\n{current_profile or '(まだ何も分かっていません)'}\n\n【直近の会話】\n{context}"
 
-    raw_profile = _lmstudio_chat(
+    raw_profile = _llm_chat(
         _USER_PROFILE_SYSTEM_PROMPT, [{"role": "user", "content": user_content}], temperature=0.3, timeout=30
     )
     new_profile = "\n".join(
@@ -481,7 +490,7 @@ def user_impression() -> str:
         "返答ではありません。特定の話題への感想や会話の続き、セリフの"
         "羅列にはせず、必ず1〜2文だけの短い独り言にしてください。"
     )
-    return _lmstudio_chat(
+    return _llm_chat(
         system_prompt, [{"role": "user", "content": user_content}], temperature=0.8, timeout=60
     )
 
