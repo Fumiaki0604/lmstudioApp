@@ -110,31 +110,16 @@ def _update_index() -> dict:
     return entries
 
 
-INTEREST_HALF_LIFE_DAYS = 14  # 興味度がこの日数ごとに半減していく(時間経過のみで減衰)
-
-
-def _decayed_interest(key: str, interest: float) -> float:
-    """保存されている興味度そのものは変更せず、作業セット選びに使う実効値
-    だけを時間経過で減衰させる。繰り返し話題に出るかどうかではなく、純粋に
-    「最後にその話題が出てから何日経ったか」だけで下がる。同じ話題がまた
-    出てくれば、その新しいエントリは日数0から採点されるので、話題として
-    まだ生きていれば自然と作業セットに留まり続ける。"""
-    try:
-        entry_date = date.fromisoformat(key.split("_", 1)[0])
-    except ValueError:
-        return interest
-    age_days = (date.today() - entry_date).days
-    return interest * (0.5 ** (age_days / INTEREST_HALF_LIFE_DAYS))
-
-
 def _select_working_set(entries: dict) -> dict:
     """検索対象を興味度TOP5+直近15件の計20件に絞る。
     keyは"day_HH:MM_role"形式でISO日付+ゼロ埋め時刻のため、文字列として
-    降順ソートするだけで新しい順になる(専用のタイムスタンプ不要)。"""
+    降順ソートするだけで新しい順になる(専用のタイムスタンプ不要)。
+    興味度は機械的な時間減衰をせず、_refresh_top_interest_scores()による
+    リリン自身の定期的な再判断だけで上下する(詳細はその関数のdocstring)。"""
     newest_first = sorted(entries.items(), key=lambda kv: kv[0], reverse=True)
 
     scored = [kv for kv in newest_first if kv[1].get("interest") is not None]
-    scored.sort(key=lambda kv: -_decayed_interest(kv[0], kv[1]["interest"]))  # 安定ソートなので同点は新しい順を維持
+    scored.sort(key=lambda kv: -kv[1]["interest"])  # 安定ソートなので同点は新しい順を維持
     top_interest = scored[:WORKING_SET_INTEREST_N]
     top_interest_keys = {k for k, _ in top_interest}
 
@@ -169,34 +154,37 @@ def search(query: str, top_k: int = 3, min_score: float = 0.5):
     return [text for score, text in scored[:top_k] if score >= min_score]
 
 
-def update_interest_scores() -> None:
-    """未採点のキャッシュ済みエントリに対し、リリン視点の「興味度」(0〜10)を
-    LLMでまとめて判定し、キャッシュに書き込む。LLM呼び出しを伴うため検索時
-    (=会話のたび)には呼ばず、assistant.pyのproactive_loopから低頻度で
-    呼ぶことを想定している。
-
-    一度付けた興味度はそのまま固定値として保存する(同じ話題が繰り返し出た
-    からといってここで下げることはしない)。話題の鮮度は_decayed_interest()
-    による時間経過のみの減衰で表現する。"""
+def _refresh_top_interest_scores(entries: dict) -> None:
+    """機械的な時間減衰や登場回数ではなく、リリン自身に「今振り返っても
+    まだ興味があるか」を定期的に再判断させる。スイーツのように世の中の
+    方で話題が次々入れ替わるジャンルは、リリンが今も関心を持ち続けて
+    いれば高いままでよく、単に日数が経ったというだけで機械的には下げない。
+    対象は現在の興味度上位勢(WORKING_SET_INTEREST_N件)のみに絞り、全件を
+    毎回問い合わせるコストを避ける。"""
     import requests
 
-    cache = _load_cache()
-    entries = cache["entries"]
-    unscored = {k: v for k, v in entries.items() if "interest" not in v}
-    if not unscored:
+    scored = [(k, v) for k, v in entries.items() if v.get("interest") is not None]
+    scored.sort(key=lambda kv: -kv[1]["interest"])
+    top = scored[:WORKING_SET_INTEREST_N]
+    if not top:
         return
 
-    keys = list(unscored.keys())
-    numbered = "\n".join(f"{i + 1}. {unscored[k]['text'][:200]}" for i, k in enumerate(keys))
+    today = date.today().isoformat()
+    numbered = "\n".join(
+        f"{i + 1}. (前回採点:{v['interest']}点 / {k.split('_', 1)[0]}時点) {v['text'][:200]}"
+        for i, (k, v) in enumerate(top)
+    )
 
     system_prompt = (
-        "あなたは「リリン」というキャラクターです。以下は過去の会話ログの"
-        "一部です。それぞれの発言について、リリン自身の視点で「この話題に"
-        "どれくらい興味を持ったか」を0〜10の整数で判定してください。\n\n"
-        "「お風呂に入る」「もう夜だから寝る」のような定型的な生活ルーティン"
-        "の報告は低く(0〜2程度)評価してください。新しい趣味の話、相手の"
-        "悩み相談、強い感情が伴う出来事、継続して話題になりそうな固有名詞"
-        "(プロジェクト名など)は高く評価してください。\n\n"
+        f"あなたは「リリン」というキャラクターです。今日の日付は{today}です。"
+        "以下は、これまでリリンが特に興味を持ったと判定された話題です。"
+        "時間が経った今あらためて振り返って、まだ同じくらい興味があるかを"
+        "あなた自身の判断で0〜10に採点し直してください。\n\n"
+        "スイーツや流行りものなど、世の中で中身が次々入れ替わっていく"
+        "ジャンルでも、そのジャンル自体への関心が続いているなら高いまま"
+        "でよく、単に日数が経ったという理由だけで機械的に下げないで"
+        "ください。逆に、今思い返すとそれほどでもなかった、もう気分が"
+        "乗らないと思うなら素直に下げてください。\n\n"
         "出力は「番号: 点数」の形式で1行に1つずつ、他の説明は書かずに"
         "返してください。"
     )
@@ -217,9 +205,10 @@ def update_interest_scores() -> None:
         res.raise_for_status()
         raw = res.json()["choices"][0]["message"]["content"]
     except Exception:
-        return  # 採点に失敗しても検索自体は(興味度無し=直近枠のみ扱いで)動き続けられる
+        return  # 再判断に失敗しても既存スコアのままでよい(更新しないだけ)
 
     score_re = re.compile(r"^\s*(\d+)\s*[:：]\s*(\d+)")
+    keys = [k for k, _ in top]
     for line in raw.splitlines():
         m = score_re.match(line)
         if not m:
@@ -228,4 +217,61 @@ def update_interest_scores() -> None:
         if 0 <= idx < len(keys):
             entries[keys[idx]]["interest"] = max(0, min(10, score))
 
+
+def update_interest_scores() -> None:
+    """未採点のキャッシュ済みエントリに対し、リリン視点の「興味度」(0〜10)を
+    LLMでまとめて判定し、キャッシュに書き込む。LLM呼び出しを伴うため検索時
+    (=会話のたび)には呼ばず、assistant.pyのproactive_loopから低頻度で
+    呼ぶことを想定している。未採点エントリの新規採点と、既存の上位勢の
+    再判断(_refresh_top_interest_scores参照)の両方を行う。"""
+    import requests
+
+    cache = _load_cache()
+    entries = cache["entries"]
+    unscored = {k: v for k, v in entries.items() if "interest" not in v}
+    if unscored:
+        keys = list(unscored.keys())
+        numbered = "\n".join(f"{i + 1}. {unscored[k]['text'][:200]}" for i, k in enumerate(keys))
+
+        system_prompt = (
+            "あなたは「リリン」というキャラクターです。以下は過去の会話ログの"
+            "一部です。それぞれの発言について、リリン自身の視点で「この話題に"
+            "どれくらい興味を持ったか」を0〜10の整数で判定してください。\n\n"
+            "「お風呂に入る」「もう夜だから寝る」のような定型的な生活ルーティン"
+            "の報告は低く(0〜2程度)評価してください。新しい趣味の話、相手の"
+            "悩み相談、強い感情が伴う出来事、継続して話題になりそうな固有名詞"
+            "(プロジェクト名など)は高く評価してください。\n\n"
+            "出力は「番号: 点数」の形式で1行に1つずつ、他の説明は書かずに"
+            "返してください。"
+        )
+        try:
+            res = requests.post(
+                LLM_CHAT_URL,
+                json={
+                    "model": LLM_MODEL,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": numbered},
+                    ],
+                    "reasoning_effort": "none",
+                    "temperature": 0.2,
+                },
+                timeout=60,
+            )
+            res.raise_for_status()
+            raw = res.json()["choices"][0]["message"]["content"]
+        except Exception:
+            raw = None  # 採点に失敗しても既存の採点済み分は動き続けられる
+
+        if raw:
+            score_re = re.compile(r"^\s*(\d+)\s*[:：]\s*(\d+)")
+            for line in raw.splitlines():
+                m = score_re.match(line)
+                if not m:
+                    continue
+                idx, score = int(m.group(1)) - 1, int(m.group(2))
+                if 0 <= idx < len(keys):
+                    entries[keys[idx]]["interest"] = max(0, min(10, score))
+
+    _refresh_top_interest_scores(entries)
     _save_cache(cache)
