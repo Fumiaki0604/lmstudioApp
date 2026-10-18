@@ -110,6 +110,23 @@ def _update_index() -> dict:
     return entries
 
 
+INTEREST_HALF_LIFE_DAYS = 14  # 興味度がこの日数ごとに半減していく(時間経過のみで減衰)
+
+
+def _decayed_interest(key: str, interest: float) -> float:
+    """保存されている興味度そのものは変更せず、作業セット選びに使う実効値
+    だけを時間経過で減衰させる。繰り返し話題に出るかどうかではなく、純粋に
+    「最後にその話題が出てから何日経ったか」だけで下がる。同じ話題がまた
+    出てくれば、その新しいエントリは日数0から採点されるので、話題として
+    まだ生きていれば自然と作業セットに留まり続ける。"""
+    try:
+        entry_date = date.fromisoformat(key.split("_", 1)[0])
+    except ValueError:
+        return interest
+    age_days = (date.today() - entry_date).days
+    return interest * (0.5 ** (age_days / INTEREST_HALF_LIFE_DAYS))
+
+
 def _select_working_set(entries: dict) -> dict:
     """検索対象を興味度TOP5+直近15件の計20件に絞る。
     keyは"day_HH:MM_role"形式でISO日付+ゼロ埋め時刻のため、文字列として
@@ -117,7 +134,7 @@ def _select_working_set(entries: dict) -> dict:
     newest_first = sorted(entries.items(), key=lambda kv: kv[0], reverse=True)
 
     scored = [kv for kv in newest_first if kv[1].get("interest") is not None]
-    scored.sort(key=lambda kv: -kv[1]["interest"])  # 安定ソートなので同点は新しい順を維持
+    scored.sort(key=lambda kv: -_decayed_interest(kv[0], kv[1]["interest"]))  # 安定ソートなので同点は新しい順を維持
     top_interest = scored[:WORKING_SET_INTEREST_N]
     top_interest_keys = {k for k, _ in top_interest}
 
@@ -152,44 +169,15 @@ def search(query: str, top_k: int = 3, min_score: float = 0.5):
     return [text for score, text in scored[:top_k] if score >= min_score]
 
 
-_TOPIC_SATURATION_SIM_THRESHOLD = 0.75  # これ以上似ていれば「同じ話題」とみなす
-
-
-def _topic_repeat_counts(entries: dict, target_keys: list) -> dict:
-    """target_keysの各エントリについて、キャッシュ全体の中で意味的に似た
-    (=同じ話題の)エントリが既にいくつあるかを数える。採点対象自身も含めて
-    数えるため最低1にはなる。embeddingは既に計算済みなのでLLM呼び出し無しで
-    計算できる(cosine類似度の総当たりのみ)。"""
-    import numpy as np
-
-    all_items = list(entries.items())
-    vectors = {k: np.array(v["vector"]) for k, v in all_items}
-    norms = {k: np.linalg.norm(v) + 1e-9 for k, v in vectors.items()}
-
-    counts = {}
-    for tk in target_keys:
-        tv = vectors[tk]
-        tn = norms[tk]
-        count = 0
-        for k, v in vectors.items():
-            sim = float(np.dot(tv, v) / (tn * norms[k]))
-            if sim >= _TOPIC_SATURATION_SIM_THRESHOLD:
-                count += 1
-        counts[tk] = count
-    return counts
-
-
 def update_interest_scores() -> None:
     """未採点のキャッシュ済みエントリに対し、リリン視点の「興味度」(0〜10)を
     LLMでまとめて判定し、キャッシュに書き込む。LLM呼び出しを伴うため検索時
     (=会話のたび)には呼ばず、assistant.pyのproactive_loopから低頻度で
     呼ぶことを想定している。
 
-    同じ話題が既に何度も出てきている場合は、採点時にその回数をLLMへ伝えて
-    興味度を下げさせる(流行り廃りと同じで、擦られすぎた話題は徐々に
-    「もう聞き飽きた」扱いにする)。既存エントリ自体を遡って再採点はせず、
-    新しく出てきた回ごとにスコアを下げる形にすることで、過去分の再処理を
-    避けつつ結果的に話題の鮮度を反映する。"""
+    一度付けた興味度はそのまま固定値として保存する(同じ話題が繰り返し出た
+    からといってここで下げることはしない)。話題の鮮度は_decayed_interest()
+    による時間経過のみの減衰で表現する。"""
     import requests
 
     cache = _load_cache()
@@ -199,11 +187,7 @@ def update_interest_scores() -> None:
         return
 
     keys = list(unscored.keys())
-    repeat_counts = _topic_repeat_counts(entries, keys)
-    numbered = "\n".join(
-        f"{i + 1}. (似た話題が既に{repeat_counts[k]}回登場済み) {unscored[k]['text'][:200]}"
-        for i, k in enumerate(keys)
-    )
+    numbered = "\n".join(f"{i + 1}. {unscored[k]['text'][:200]}" for i, k in enumerate(keys))
 
     system_prompt = (
         "あなたは「リリン」というキャラクターです。以下は過去の会話ログの"
@@ -213,11 +197,6 @@ def update_interest_scores() -> None:
         "の報告は低く(0〜2程度)評価してください。新しい趣味の話、相手の"
         "悩み相談、強い感情が伴う出来事、継続して話題になりそうな固有名詞"
         "(プロジェクト名など)は高く評価してください。\n\n"
-        "各項目の冒頭に「似た話題が既にN回登場済み」という情報が付いています。"
-        "人間が流行りの話題に飛びついても、話題が擦り切れると誰も話題にしなく"
-        "なるのと同じように、このNが大きい(=何度も話題に上っている)ほど、"
-        "たとえ内容自体は興味深くても新鮮味が薄れたものとして評価を下げて"
-        "ください。Nが0〜1(初出に近い)なら通常通り評価してください。\n\n"
         "出力は「番号: 点数」の形式で1行に1つずつ、他の説明は書かずに"
         "返してください。"
     )
