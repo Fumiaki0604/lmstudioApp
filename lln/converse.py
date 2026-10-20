@@ -49,6 +49,13 @@ def _llm_chat(system_prompt: str, messages: list, temperature: float = 0.7, time
     話)が続いた時に、直前の返答をほぼそのままテンプレートとして使い回す
     退化が起きることを実際に確認した(LM Studio時代にrepeat_penalty:1.3で
     解消済み。Splashでの対応パラメータ名はrepetition_penalty)。
+
+    値は1.3から1.15に下げてある。1.3のままだと、会話が長くなった時に
+    出力へ中国語の単語・漢字(简体字)が混入する現象を実際に複数回確認した
+    (ペナルティ無しでは3回連続で再現せず、1.3では高頻度で再現したため、
+    ペナルティがモデルを馴染みの薄いトークンへ押しやっていると見られる)。
+    1.15でも完全には無くならないが、頻度・深刻さは明確に下がることを
+    確認済み。将来的にさらに調整が必要になる可能性がある。
     """
     full_messages = [{"role": "system", "content": system_prompt}] + messages
 
@@ -59,7 +66,7 @@ def _llm_chat(system_prompt: str, messages: list, temperature: float = 0.7, time
             "messages": full_messages,
             "reasoning_effort": "none",
             "temperature": temperature,
-            "repetition_penalty": 1.3,
+            "repetition_penalty": 1.15,
         },
         timeout=timeout,
     )
