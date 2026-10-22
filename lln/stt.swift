@@ -120,6 +120,18 @@ func restartRecognitionTask() {
     }
 }
 
+// afplayなど別プロセスが再生した音(=Rilin自身の声)がマイクに回り込むのを、
+// OS側のハードウェアエコーキャンセラ(VoIP通話等で使われるのと同じ仕組み)で
+// 物理的に打ち消す。is_echo()的な文字列照合より前段で音自体を減らせるため、
+// 聞き取り結果が多少ズレても自己エコーを拾いにくくなる狙い。
+func enableVoiceProcessing() {
+    do {
+        try audioEngine.inputNode.setVoiceProcessingEnabled(true)
+    } catch {
+        printJSON(["type": "error", "message": "voice_processing_enable_failed: \(error.localizedDescription)"])
+    }
+}
+
 func installTap() {
     let inputNode = audioEngine.inputNode
     let format = inputNode.inputFormat(forBus: 0)
@@ -141,6 +153,7 @@ func installTap() {
 }
 
 func setupAudioAndStart() {
+    enableVoiceProcessing()
     installTap()
 
     do {
@@ -171,6 +184,7 @@ func setupAudioAndStart() {
             printJSON(["type": "state", "status": "reconfiguring"])
             audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
+            enableVoiceProcessing()
             installTap()
             do {
                 try audioEngine.start()
