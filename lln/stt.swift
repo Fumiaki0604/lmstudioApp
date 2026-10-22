@@ -120,17 +120,12 @@ func restartRecognitionTask() {
     }
 }
 
-// afplayなど別プロセスが再生した音(=Rilin自身の声)がマイクに回り込むのを、
-// OS側のハードウェアエコーキャンセラ(VoIP通話等で使われるのと同じ仕組み)で
-// 物理的に打ち消す。is_echo()的な文字列照合より前段で音自体を減らせるため、
-// 聞き取り結果が多少ズレても自己エコーを拾いにくくなる狙い。
-func enableVoiceProcessing() {
-    do {
-        try audioEngine.inputNode.setVoiceProcessingEnabled(true)
-    } catch {
-        printJSON(["type": "error", "message": "voice_processing_enable_failed: \(error.localizedDescription)"])
-    }
-}
+// 試験導入: AVAudioEngineのVoice Processing(AEC)でRilin自身の声の回り込みを
+// 物理的に抑えようとしたが、ユーザーの生声まで一切拾わなくなる(マイク入力が
+// 丸ごと無音化する)重大な副作用を実機確認したため撤回。inputNodeのみに
+// 有効化する構成(このエンジンでは出力ノードを使っていない)では、エコー
+// 参照信号が無く、ボイスプロセッシングAUが入力を過剰にゲートしてしまう
+// ものと見られる。自己エコー対策はis_echo()の文字列照合側に戻す。
 
 func installTap() {
     let inputNode = audioEngine.inputNode
@@ -153,7 +148,6 @@ func installTap() {
 }
 
 func setupAudioAndStart() {
-    enableVoiceProcessing()
     installTap()
 
     do {
@@ -184,7 +178,6 @@ func setupAudioAndStart() {
             printJSON(["type": "state", "status": "reconfiguring"])
             audioEngine.inputNode.removeTap(onBus: 0)
             audioEngine.stop()
-            enableVoiceProcessing()
             installTap()
             do {
                 try audioEngine.start()
