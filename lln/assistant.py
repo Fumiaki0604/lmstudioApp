@@ -29,6 +29,11 @@ from trigger import PROACTIVE_PROMPT
 STT_APP = os.path.join(os.path.dirname(__file__), "stt.app")
 LOG_PATH = os.path.join(os.path.dirname(__file__), "stt_live.log")
 ECHO_SIMILARITY_THRESHOLD = 0.5
+# stt.swiftのsilenceInterval(1.2秒)により、自分の発話末尾の確定(final)が
+# 再生終了より遅れて届くことがある。その間に生じた確定結果は、内容一致
+# (is_echo)の対象外になるほど短い断片でも自己エコーである可能性が高いため、
+# 再生終了直後はこの秒数だけ内容を問わず確定結果を読み捨てる。
+ECHO_GUARD_SEC = 1.8
 
 WAKE_WORDS = ("ねえ", "あのさ")  # 会話開始時にこれで始まる発話だけ本気の呼びかけとして扱う
 CONVERSATION_SESSION_SEC = 60  # この秒数以内の会話継続中はウェイクワード不要
@@ -154,6 +159,7 @@ def reactive_loop() -> None:
     consecutive_errors = 0
     last_listening_check = 0.0
     seen_speak_end_time = last_speak_end_time
+    echo_guard_until = 0.0
 
     with open(LOG_PATH, "r") as f:
         while True:
@@ -163,6 +169,7 @@ def reactive_loop() -> None:
                 # 読み捨てる。再生終了直後は余韻が録れきっていないこともある
                 # ため、少し待ってからシークする。
                 seen_speak_end_time = last_speak_end_time
+                echo_guard_until = last_speak_end_time + ECHO_GUARD_SEC
                 time.sleep(0.3)
                 f.seek(0, os.SEEK_END)
                 continue
@@ -212,6 +219,13 @@ def reactive_loop() -> None:
             else:
                 continue
             text = event.get("text", "").strip()
+            if time.time() < echo_guard_until:
+                # is_echo()の文字列一致はECHO_FRAGMENT_MIN_LEN未満の短い語
+                # (「ふみくん」のような呼び名の断片など)を判定対象外にしている
+                # ため、自分の発話の残響がたまたま短い単語として確定した場合
+                # すり抜けてしまう実例を確認した。再生終了直後の数秒間は
+                # 内容を問わず確定結果ごと捨てることで、その抜け穴を塞ぐ。
+                continue
             if not text or is_echo(text) or in_quiet_hours() or is_mutter(text):
                 continue
 
