@@ -34,6 +34,14 @@ ECHO_SIMILARITY_THRESHOLD = 0.5
 # (is_echo)の対象外になるほど短い断片でも自己エコーである可能性が高いため、
 # 再生終了直後はこの秒数だけ内容を問わず確定結果を読み捨てる。
 ECHO_GUARD_SEC = 1.8
+# 短い断片(ECHO_FRAGMENT_MIN_LEN未満)はis_echo()の内容一致判定の対象外に
+# なるため、ECHO_GUARD_SECだけでは直前の返答が長いほど取りこぼしやすい
+# (実例:長い返答中に出た「フミくん」という呼び名の4文字の残響が、1.8秒を
+# 過ぎてから確定して素通りした)。短い断片に限り、直前の返答の長さに応じて
+# ガード時間を伸ばす。長い返答ほど再生時間も長く、STTの確定が遅れて届く
+# 余地が増えるという経験則によるもの。
+SHORT_FRAGMENT_GUARD_PER_CHAR_SEC = 0.02
+SHORT_FRAGMENT_GUARD_MAX_SEC = 6.0
 
 WAKE_WORDS = ("ねえ", "あのさ")  # 会話開始時にこれで始まる発話だけ本気の呼びかけとして扱う
 CONVERSATION_SESSION_SEC = 60  # この秒数以内の会話継続中はウェイクワード不要
@@ -160,6 +168,7 @@ def reactive_loop() -> None:
     last_listening_check = 0.0
     seen_speak_end_time = last_speak_end_time
     echo_guard_until = 0.0
+    short_fragment_guard_until = 0.0
 
     with open(LOG_PATH, "r") as f:
         while True:
@@ -170,6 +179,11 @@ def reactive_loop() -> None:
                 # ため、少し待ってからシークする。
                 seen_speak_end_time = last_speak_end_time
                 echo_guard_until = last_speak_end_time + ECHO_GUARD_SEC
+                short_fragment_guard_sec = min(
+                    SHORT_FRAGMENT_GUARD_MAX_SEC,
+                    ECHO_GUARD_SEC + SHORT_FRAGMENT_GUARD_PER_CHAR_SEC * len(last_spoken_text),
+                )
+                short_fragment_guard_until = last_speak_end_time + short_fragment_guard_sec
                 time.sleep(0.3)
                 f.seek(0, os.SEEK_END)
                 continue
@@ -225,6 +239,13 @@ def reactive_loop() -> None:
                 # ため、自分の発話の残響がたまたま短い単語として確定した場合
                 # すり抜けてしまう実例を確認した。再生終了直後の数秒間は
                 # 内容を問わず確定結果ごと捨てることで、その抜け穴を塞ぐ。
+                continue
+            if len(text) < ECHO_FRAGMENT_MIN_LEN and time.time() < short_fragment_guard_until:
+                # 上のecho_guard_untilを過ぎても、短い断片に限っては直前の
+                # 返答の長さに応じて伸びるこちらのガードでなお捨てる
+                # (SHORT_FRAGMENT_GUARD_PER_CHAR_SEC参照)。is_echo()の
+                # 内容一致が効かない短さの発話にだけ適用するため、通常の
+                # 会話応答がこれで遅れることはない。
                 continue
             if not text or is_echo(text) or in_quiet_hours() or is_mutter(text):
                 continue
