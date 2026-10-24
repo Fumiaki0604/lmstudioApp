@@ -302,7 +302,10 @@ def _apply_pronunciation_dict_with_retry() -> None:
 
 
 def main() -> None:
-    _apply_pronunciation_dict_with_retry()
+    # 同期的に待つと、COEIROINK起動待ちの間マイク認識(reactive_loop)の
+    # 開始自体が遅れてしまう(最悪ケースで最大60秒)。辞書登録の完了を
+    # 待たずに会話を始められるよう、別スレッドで並行して走らせる。
+    threading.Thread(target=_apply_pronunciation_dict_with_retry, daemon=True).start()
     threading.Thread(target=proactive_loop, daemon=True).start()
     reactive_loop()
 
