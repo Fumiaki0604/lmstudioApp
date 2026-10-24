@@ -280,11 +280,29 @@ def proactive_loop() -> None:
         last_interaction_time = time.time()
 
 
+# ログイン直後はCOEIROINKアプリ側の起動がassistant.py(launchd, RunAtLoad)
+# より遅れることがあり、その場合apply()が接続エラーで失敗して辞書が
+# 一度も反映されないまま1日が過ぎる不具合を実際に確認した(例:「暇」が
+# 「いとま」と読まれ続けた)。起動直後の数十秒はCOEIROINK起動待ちとして
+# リトライする。
+PRONUNCIATION_DICT_RETRY_COUNT = 6
+PRONUNCIATION_DICT_RETRY_INTERVAL_SEC = 10
+
+
+def _apply_pronunciation_dict_with_retry() -> None:
+    for attempt in range(PRONUNCIATION_DICT_RETRY_COUNT):
+        try:
+            pronunciation_dict.apply()
+            return
+        except Exception as e:
+            if attempt == PRONUNCIATION_DICT_RETRY_COUNT - 1:
+                print(f"[error] pronunciation_dict: {e}")
+            else:
+                time.sleep(PRONUNCIATION_DICT_RETRY_INTERVAL_SEC)
+
+
 def main() -> None:
-    try:
-        pronunciation_dict.apply()
-    except Exception as e:
-        print(f"[error] pronunciation_dict: {e}")
+    _apply_pronunciation_dict_with_retry()
     threading.Thread(target=proactive_loop, daemon=True).start()
     reactive_loop()
 
