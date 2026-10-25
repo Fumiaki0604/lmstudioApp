@@ -36,12 +36,24 @@ LLM_CHAT_URL = "http://127.0.0.1:8000/v1/chat/completions"
 MODEL = "mlx-community/Qwen3.6-35B-A3B-4bit"
 
 
-def _llm_chat(system_prompt: str, messages: list, temperature: float = 0.7, timeout: int = 60) -> str:
+def _llm_chat(
+    system_prompt: str, messages: list, temperature: float = 0.7, timeout: int = 60, reasoning_effort: str = "none"
+) -> str:
     """Splash(OpenAI互換API)を叩く共通ヘルパー。
 
-    reasoning_effort:"none"でreasoningを明示的に無効化する(LM Studio時代の
-    reasoning:offと同じ目的)。LM StudioのGUI依存の「Enable Thinking」設定
-    トグルが勝手に戻る問題を避けるため元々この方式にした経緯があり、Splashは
+    reasoning_effort:デフォルトは"none"(reasoning無効)。会話の生成
+    (generate/proactive_utterance/filler_phrase/task_ack_phrase)は即効性が
+    最優先のため"none"のまま固定する。以前generate()でreasoning_effort:
+    "low"を試した際、thinking_token_budgetを絞ると生の思考過程が音声として
+    読み上げられる内容に漏れて会話が破綻し、絞らなければ応答が10秒近く
+    掛かる(会話のテンポを著しく損なう)ことを実測で確認済みのため。
+    一方、update_user_profile()やuser_impression()のようにユーザーの発話を
+    即座に待たせない非会話系の裏方処理(定期実行/管理画面表示用)は、
+    reasoning_effortを呼び出し側で明示的に上げてよい(_llm_chat自体の
+    デフォルトは引き続き"none")。
+
+    LM StudioのGUI依存の「Enable Thinking」設定トグルが勝手に戻る問題を
+    避けるため元々この方式にした経緯があり、Splashは
     GUIを持たないサーバーなのでそもそもその種の問題は起きないはずだが、
     念のため引き続き毎回明示指定する。
 
@@ -64,7 +76,7 @@ def _llm_chat(system_prompt: str, messages: list, temperature: float = 0.7, time
         json={
             "model": MODEL,
             "messages": full_messages,
-            "reasoning_effort": "none",
+            "reasoning_effort": reasoning_effort,
             "temperature": temperature,
             "repetition_penalty": 1.15,
         },
@@ -540,7 +552,11 @@ def update_user_profile() -> None:
     user_content = f"【現在のプロフィール】\n{current_profile or '(まだ何も分かっていません)'}\n\n【直近の会話】\n{context}"
 
     raw_profile = _llm_chat(
-        _USER_PROFILE_SYSTEM_PROMPT, [{"role": "user", "content": user_content}], temperature=0.3, timeout=30
+        _USER_PROFILE_SYSTEM_PROMPT,
+        [{"role": "user", "content": user_content}],
+        temperature=0.3,
+        timeout=120,
+        reasoning_effort="low",
     )
     new_profile = "\n".join(
         line for line in raw_profile.splitlines() if not _is_transient_line(line)
@@ -572,7 +588,11 @@ def user_impression() -> str:
         "羅列にはせず、必ず1〜2文だけの短い独り言にしてください。"
     )
     return _llm_chat(
-        system_prompt, [{"role": "user", "content": user_content}], temperature=0.8, timeout=60
+        system_prompt,
+        [{"role": "user", "content": user_content}],
+        temperature=0.8,
+        timeout=120,
+        reasoning_effort="low",
     )
 
 
