@@ -445,6 +445,30 @@ def filler_phrase() -> str:
     )
 
 
+def task_ack_phrase() -> str:
+    """「〜しておいて」の指示を受けて、バックグラウンドでタスク実行に
+    取り掛かる直前の短い了解の一言。タスクの実行自体は別プロセス(Goose)
+    に任せて即座に返すため、ここで結果を待つことはしない。filler_phrase()
+    と同様、履歴・ログには残さない。"""
+    global last_reply_style
+    last_reply_style = None
+    system_prompt = _persona_system_prompt(config.load())
+
+    return _llm_chat(
+        system_prompt,
+        [
+            {
+                "role": "user",
+                "content": "(相手から「〜しておいて」と作業を頼まれました。これから裏でその作業に"
+                "取り掛かります。作業の具体的な中身には触れず、軽く了解したことだけを伝える"
+                "短いひとことを言ってください。1文だけ。)",
+            }
+        ],
+        temperature=0.8,
+        timeout=30,
+    )
+
+
 _TRANSIENT_KEYWORDS = (
     "今日", "本日", "現在", "今", "祝日", "休日", "休み", "月", "日まで", "曜日",
     "天気", "雨", "晴れ", "曇り", "雪", "気温", "喉", "体調", "食欲", "疲れ",

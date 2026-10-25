@@ -4,3 +4,4 @@ __pycache__/
 memory/
 config.json
 .venv311/
+goose_tasks/

@@ -19,7 +19,7 @@ import time
 import config
 import converse
 import pronunciation_dict
-from converse import filler_phrase, generate, proactive_utterance, update_user_profile
+from converse import filler_phrase, generate, proactive_utterance, task_ack_phrase, update_user_profile
 from gate import can_speak_now, in_quiet_hours
 from memory_search import update_interest_scores
 from speak import SPEAKERS, play, synthesize
@@ -45,6 +45,57 @@ SHORT_FRAGMENT_GUARD_MAX_SEC = 6.0
 
 WAKE_WORDS = ("ねえ", "あのさ")  # 会話開始時にこれで始まる発話だけ本気の呼びかけとして扱う
 CONVERSATION_SESSION_SEC = 60  # この秒数以内の会話継続中はウェイクワード不要
+
+# ---------------------------------------------------------------------------
+# Goose(AIエージェントCLI)へのタスク委譲
+#
+# 「〜しておいて」で終わる発話だけを対象にした狭いトリガーにする。LLMに
+# 「これはタスク依頼か」を判定させる案もあったが、(1) 判定のためのLLM
+# 呼び出しが毎ターン増えて反応が遅くなる、(2) ファイル操作やエージェント
+# 実行のような実害のある処理を、誤判定で勝手に実行してしまうリスクの方が、
+# トリガーを言い忘れて頼み直す程度のコストより高い、という理由で
+# 正規表現による確定的な判定を選んだ。
+# ---------------------------------------------------------------------------
+
+GOOSE_BIN = "/opt/homebrew/bin/goose"
+GOOSE_TASK_DIR = os.path.join(os.path.dirname(__file__), "goose_tasks")
+# 動詞のテ形+「おいて」という文法パターン全般を拾う。「しておいて」限定
+# (する動詞のみ)だと「調べておいて」「まとめておいて」のような一段動詞・
+# 五段動詞のテ形を取りこぼすため、「し」は要求しない。文末の「ね」「よ」
+# などの終助詞も素通りできるよう、句読点と合わせて末尾で許容する。
+_GOOSE_TRIGGER_RE = re.compile(r"^(.+?)ておいて[。、！!？?ねよなさ\s]*$")
+
+
+def extract_goose_task(text: str):
+    """マッチした場合、Gooseに渡す自然な依頼文(「〜てください」化)を返す。
+    正規表現の捕捉群は「ておいて」の直前まで(テ形の「て」を含まない途中の
+    語幹)になるため、そのままでは「明日の天気を調べ」のように文が
+    途切れる。「てください」を補って完全な依頼文に整える。"""
+    m = _GOOSE_TRIGGER_RE.match(text)
+    if not m:
+        return None
+    return m.group(1).strip() + "てください"
+
+
+def dispatch_goose_task(task_text: str) -> None:
+    """goose run -t "<task_text>" をバックグラウンドで起動する。会話ループを
+    止めないよう、完了を待たずにすぐ返る(subprocess.Popen、.runではない)。
+    出力先(ドキュメント保存/Discord投稿等)は未確定のため、まずはローカル
+    ファイルに結果を残す土台だけ作る。あとから結果を転送する仕組みは
+    このファイルを後から拾う形で重ねられる。"""
+    os.makedirs(GOOSE_TASK_DIR, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    out_path = os.path.join(GOOSE_TASK_DIR, f"{timestamp}.log")
+    with open(out_path, "w") as f:
+        f.write(f"[task] {task_text}\n\n")
+        f.flush()
+        subprocess.Popen(
+            [GOOSE_BIN, "run", "-t", task_text],
+            stdout=f,
+            stderr=subprocess.STDOUT,
+            cwd=GOOSE_TASK_DIR,
+        )
+    print(f"[goose] dispatched -> {out_path}: {task_text}")
 
 
 def strip_wake_word(text: str):
@@ -257,13 +308,22 @@ def reactive_loop() -> None:
             #     if not text:
             #         continue
 
+            goose_task = extract_goose_task(text)
             try:
-                if will_use_tools(text):
-                    speak_text(filler_phrase())
-                reply = generate(text)
-                print(f"[user] {text}")
-                print(f"[reply] {reply}")
-                speak_text(reply)
+                if goose_task:
+                    # 会話(generate())の文脈には乗せない独立した経路。
+                    # 了解の一言だけ即座に返し、実行はバックグラウンドの
+                    # goose run に委ねて会話ループをブロックしない。
+                    print(f"[user] {text}")
+                    speak_text(task_ack_phrase())
+                    dispatch_goose_task(goose_task)
+                else:
+                    if will_use_tools(text):
+                        speak_text(filler_phrase())
+                    reply = generate(text)
+                    print(f"[user] {text}")
+                    print(f"[reply] {reply}")
+                    speak_text(reply)
             except Exception as e:
                 print(f"[error] reactive: {e}")
             # 発話中に溜まった分の読み捨ては、ループ先頭のlast_speak_end_time
