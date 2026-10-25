@@ -18,6 +18,7 @@ import time
 
 import config
 import converse
+import discord_notify
 import pronunciation_dict
 from converse import filler_phrase, generate, proactive_utterance, task_ack_phrase, update_user_profile
 from gate import can_speak_now, in_quiet_hours
@@ -77,25 +78,41 @@ def extract_goose_task(text: str):
     return m.group(1).strip() + "てください"
 
 
+def _notify_goose_result(proc: subprocess.Popen, task_text: str, out_path: str) -> None:
+    """バックグラウンドスレッドでgooseプロセスの終了を待ち、完了したら
+    出力をDiscordへ投稿する(別スレッドなのでreactive_loopはブロックしない)。
+    Webhook URL未設定の場合は何もしない。"""
+    proc.wait()
+    webhook_url = config.load().get("discord_webhook_url")
+    if not webhook_url:
+        return
+    try:
+        with open(out_path) as f:
+            output = f.read()
+    except Exception:
+        output = "(出力の読み込みに失敗しました)"
+    discord_notify.post(webhook_url, f"**依頼:** {task_text}\n```\n{output}\n```")
+
+
 def dispatch_goose_task(task_text: str) -> None:
     """goose run -t "<task_text>" をバックグラウンドで起動する。会話ループを
     止めないよう、完了を待たずにすぐ返る(subprocess.Popen、.runではない)。
-    出力先(ドキュメント保存/Discord投稿等)は未確定のため、まずはローカル
-    ファイルに結果を残す土台だけ作る。あとから結果を転送する仕組みは
-    このファイルを後から拾う形で重ねられる。"""
+    結果はローカルのログファイルに残しつつ、完了時にDiscordへ投稿する
+    (投稿は別スレッドでプロセス完了を待つため、こちらも会話をブロックしない)。"""
     os.makedirs(GOOSE_TASK_DIR, exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     out_path = os.path.join(GOOSE_TASK_DIR, f"{timestamp}.log")
     with open(out_path, "w") as f:
         f.write(f"[task] {task_text}\n\n")
         f.flush()
-        subprocess.Popen(
+        proc = subprocess.Popen(
             [GOOSE_BIN, "run", "-t", task_text],
             stdout=f,
             stderr=subprocess.STDOUT,
             cwd=GOOSE_TASK_DIR,
         )
     print(f"[goose] dispatched -> {out_path}: {task_text}")
+    threading.Thread(target=_notify_goose_result, args=(proc, task_text, out_path), daemon=True).start()
 
 
 def strip_wake_word(text: str):

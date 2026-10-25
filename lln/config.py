@@ -16,6 +16,7 @@ DEFAULTS = {
     "default_weather_location": "中目黒",
     "user_profile": "",
     "pronunciation_entries": [{"word": "リリン", "yomi": "リリン", "accent": 0}],
+    "discord_webhook_url": "",
 }
 
 
