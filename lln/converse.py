@@ -398,7 +398,17 @@ def proactive_utterance(prompt: str) -> str:
     """能動的な一言を生成する。長時間の沈黙の後に呼ばれるため、直前の
     (古くなっていたり認識ミスの断片かもしれない)会話履歴には引っ張られず、
     新規の話しかけとして生成する。結果は履歴・ログに残すので、その後の
-    ユーザーの反応(generate())からは通常通り参照できる。"""
+    ユーザーの反応(generate())からは通常通り参照できる。
+
+    promptは「あなたから自発的に話しかけてください」のようなメタ指示文
+    であり、ユーザーが実際に言った言葉ではないため、これをhistory/ログに
+    「user」として記録してはいけない。以前はこれも記録していたため、
+    次にgenerate()が呼ばれた時、Rilin自身の相談持ちかけの直前に
+    「これはユーザーからの発言ではありません」という指示文がユーザー発言
+    として紛れ込み、ユーザーの返答に対して文脈の繋がらない応答を返す
+    実例を確認した(相談に乗ってと話しかけた直後、ユーザーが「いいよ」と
+    応じても全く関係ない話をしていた)。生成に使うのはこの1回の呼び出しの
+    中だけに留め、永続履歴にはRilinが実際に言った内容(text)だけを残す。"""
     global last_reply_style
     last_reply_style = None  # このタグ付けはgenerate()限定なので、次の読み上げは固定styleにフォールバックさせる
     with _history_lock:
@@ -409,7 +419,6 @@ def proactive_utterance(prompt: str) -> str:
             system_prompt, [{"role": "user", "content": prompt}], temperature=0.8, timeout=30
         )
 
-        _record("user", prompt)
         _record("assistant", text)
         del history[:-MAX_HISTORY_MESSAGES]
 
