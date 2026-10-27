@@ -16,6 +16,8 @@ import jpholiday
 import requests
 
 import config
+import log_janitor
+from log_janitor import normalize_line, significant_lines
 from memory_search import search as search_memory
 from mood import mood_instruction
 from speak import SPEAKERS, play, synthesize
@@ -229,7 +231,24 @@ def _is_near_duplicate(a: str, b: str) -> bool:
     return difflib.SequenceMatcher(None, a, b).ratio() >= 0.85
 
 
-def _needs_retry(reply: str, prev_assistant_reply: str) -> bool:
+RECENT_REPLY_WINDOW = 5
+
+
+def _recycled_lines(reply: str, recent_replies: list) -> set:
+    """直近の自分の返答にも含まれていた文。全文の類似度では、冒頭と締めの
+    定型文だけを毎回使い回すパターン(2026-10-25〜26に「頭の回転が遅すぎない？」
+    が連発した件)を検出できないため、文単位で比較する。"""
+    body = _STYLE_TAG_RE.sub("", reply, count=1)
+    seen = set().union(*(significant_lines(r) for r in recent_replies)) if recent_replies else set()
+    return significant_lines(body) & seen
+
+
+def _strip_lines(reply: str, lines: set) -> str:
+    kept = [l for l in reply.splitlines() if normalize_line(l) not in lines]
+    return "\n".join(kept)
+
+
+def _needs_retry(reply: str, prev_assistant_reply: str, recent_replies: list) -> bool:
     """embeddingベースのmemory_searchは緩い話題の一致でもrecalledを返すため、
     「recalledが空でない=本当に前に話した」を判定材料にすると、日常会話的な
     質問(「今日はどんな感じだった」等)はほぼ常に何かしら引っかかってしまい、
@@ -237,6 +256,8 @@ def _needs_retry(reply: str, prev_assistant_reply: str) -> bool:
     BEHAVIOR_RULES側で「本当に既出でも指摘しない」よう別途指示しているため、
     ここではrecalledの有無を見ずに、フレーズが出た時点で一律やり直す。"""
     if _is_near_duplicate(reply, prev_assistant_reply):
+        return True
+    if _recycled_lines(reply, recent_replies):
         return True
     return bool(_FALSE_REPETITION_RE.search(reply))
 
@@ -343,9 +364,10 @@ def _merge_consecutive_roles(messages: list) -> list:
 def generate(prompt: str) -> str:
     global last_reply_style
     with _history_lock:
-        prev_assistant_reply = next(
-            (m["content"] for m in reversed(history) if m["role"] == "assistant"), ""
-        )
+        recent_replies = [m["content"] for m in history if m["role"] == "assistant"][
+            -RECENT_REPLY_WINDOW:
+        ]
+        prev_assistant_reply = recent_replies[-1] if recent_replies else ""
 
         _record("user", prompt)
 
@@ -383,11 +405,20 @@ def generate(prompt: str) -> str:
             # そのまま見せると同じ内容を模倣し続けてしまうため、今回の発言単体だけを
             # 渡してfew-shot的な模倣元を断つ。
             for _ in range(2):
-                if not _needs_retry(reply, prev_assistant_reply):
+                if not _needs_retry(reply, prev_assistant_reply, recent_replies):
                     break
                 reply = _llm_chat(
                     system_prompt + _RETRY_NOTE, [{"role": "user", "content": prompt}]
                 )
+
+            # やり直しても使い回しが残った場合、その文だけ削って話す。ログに残すと
+            # 次回以降の手本になり口癖が定着するため(本文が空になるなら諦めてそのまま)。
+            recycled = _recycled_lines(reply, recent_replies)
+            if recycled:
+                stripped = _strip_lines(reply, recycled)
+                if _STYLE_TAG_RE.sub("", stripped, count=1).strip():
+                    print(f"[recycled] stripped: {sorted(recycled)}")
+                    reply = stripped
         except Exception:
             history.pop()  # 失敗した発言を履歴に残さない(次回以降の連鎖失敗を防ぐ)
             raise
@@ -404,6 +435,16 @@ def generate(prompt: str) -> str:
         del history[:-MAX_HISTORY_MESSAGES]
 
     return reply
+
+
+def clean_logs() -> int:
+    """ログの口癖化した発言を退避し、メモリ上の履歴も読み直す(assistant.pyの夜間処理から呼ぶ)。
+    ログへの追記と競合しないよう、generate()と同じロックの中で行う。"""
+    with _history_lock:
+        n = log_janitor.run()
+        if n:
+            history[:] = _load_recent_history(MAX_HISTORY_MESSAGES)
+    return n
 
 
 def proactive_utterance(prompt: str) -> str:

@@ -110,6 +110,14 @@ def _update_index() -> dict:
     return entries
 
 
+def forget(keys: set) -> None:
+    """退避した発言のembeddingをキャッシュから消す(過去日は再スキャンされないため明示的に消す必要がある)。"""
+    cache = _load_cache()
+    for k in keys:
+        cache["entries"].pop(k, None)
+    _save_cache(cache)
+
+
 def _select_working_set(entries: dict) -> dict:
     """検索対象を興味度TOP5+直近15件の計20件に絞る。
     keyは"day_HH:MM_role"形式でISO日付+ゼロ埋め時刻のため、文字列として

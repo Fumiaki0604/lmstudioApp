@@ -15,6 +15,7 @@ import re
 import subprocess
 import threading
 import time
+from datetime import date, datetime
 
 import config
 import converse
@@ -122,6 +123,7 @@ def strip_wake_word(text: str):
     return None
 
 CHECK_INTERVAL_SEC = 30 * 60  # 30分おきに判定
+LOG_JANITOR_HOUR = 4
 SILENCE_THRESHOLD_SEC = 45 * 60  # 直近45分会話が無ければ対象
 
 speak_lock = threading.Lock()
@@ -351,8 +353,19 @@ def reactive_loop() -> None:
 def proactive_loop() -> None:
     global last_interaction_time
     last_profile_update_time = 0.0
+    last_janitor_date = None
     while True:
         time.sleep(CHECK_INTERVAL_SEC)
+
+        # 会話の無い静かな時間帯(深夜)に1日1回、口癖化したログを退避する
+        today = date.today()
+        if in_quiet_hours() and datetime.now().hour >= LOG_JANITOR_HOUR and last_janitor_date != today:
+            try:
+                n = converse.clean_logs()
+                print(f"[janitor] quarantined {n} entries")
+            except Exception as e:
+                print(f"[error] log janitor: {e}")
+            last_janitor_date = today
 
         if not in_quiet_hours() and last_interaction_time > last_profile_update_time:
             try:
