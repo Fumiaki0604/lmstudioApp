@@ -17,6 +17,8 @@ import threading
 import time
 from datetime import date, datetime
 
+from janome.tokenizer import Tokenizer
+
 import config
 import converse
 import discord_notify
@@ -184,6 +186,32 @@ def is_mutter(text: str) -> bool:
     return bool(_MUTTER_RE.match(text))
 
 
+# 生活音・独り言から拾った名詞だけの断片(「切符」「背中」「スポーツ」「ます」等)に
+# 意味不明な返答をする件への対策。_MUTTER_REと同じくLLMは使わず、品詞だけで
+# 「文として成り立っているか」を判定する。動詞・形容詞・助詞・感動詞の
+# いずれかがあれば文(または返事・挨拶)とみなす。
+_tokenizer = Tokenizer()
+_SENTENCE_POS = {"動詞", "形容詞", "助詞", "感動詞"}
+_FRAGMENT_POS = {"名詞", "助動詞", "接頭詞", "副詞"}
+# Rilinの発話直後は「何食べたい？」→「カレー」のような1語の返事があり得るので通す
+FRAGMENT_REPLY_WINDOW_SEC = 60
+_CALL_NAME_RE = re.compile(r"リリ|りり")
+
+
+def is_fragment(text: str) -> bool:
+    if _CALL_NAME_RE.search(text) or text.rstrip().endswith(("？", "?")):
+        return False
+    pos = [t.part_of_speech.split(",")[0] for t in _tokenizer.tokenize(text)]
+    pos = [p for p in pos if p != "記号"]
+    if any(p in _SENTENCE_POS for p in pos):
+        return False
+    # 「天気どう」(名詞+副詞)や「いやです」(名詞+助動詞)のように複数語なら
+    # 文になり得るため、副詞・助動詞は単独の時だけ断片扱いにする
+    if len(pos) >= 2 and ("副詞" in pos or "助動詞" in pos):
+        return False
+    return all(p in _FRAGMENT_POS for p in pos)
+
+
 def speak_text(text: str) -> None:
     global last_spoken_text, last_speak_end_time
     cfg = config.load()
@@ -318,6 +346,12 @@ def reactive_loop() -> None:
                 # 会話応答がこれで遅れることはない。
                 continue
             if not text or is_echo(text) or in_quiet_hours() or is_mutter(text):
+                continue
+            if (
+                time.time() - last_speak_end_time > FRAGMENT_REPLY_WINDOW_SEC
+                and is_fragment(text)
+            ):
+                print(f"[fragment] ignored: {text}")
                 continue
 
             # ウェイクワード必須にすると取りこぼしが増えて反応が悪くなったため無効化。
