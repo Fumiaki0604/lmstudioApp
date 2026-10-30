@@ -231,13 +231,12 @@ def _is_near_duplicate(a: str, b: str) -> bool:
     return difflib.SequenceMatcher(None, a, b).ratio() >= 0.85
 
 
-RECENT_REPLY_WINDOW = 5
-
-
 def _recycled_lines(reply: str, recent_replies: list) -> set:
-    """直近の自分の返答にも含まれていた文。全文の類似度では、冒頭と締めの
+    """履歴内の自分の返答にも含まれていた文。全文の類似度では、冒頭と締めの
     定型文だけを毎回使い回すパターン(2026-10-25〜26に「頭の回転が遅すぎない？」
-    が連発した件)を検出できないため、文単位で比較する。"""
+    が連発した件)を検出できないため、文単位で比較する。比較対象を直近5件に
+    絞っていた時期は、約10件前(朝)の返答をほぼ丸写しした件(2026-10-30)を
+    素通りさせたため、履歴内の返答全部と比べる。"""
     body = _STYLE_TAG_RE.sub("", reply, count=1)
     seen = set().union(*(significant_lines(r) for r in recent_replies)) if recent_replies else set()
     return significant_lines(body) & seen
@@ -248,14 +247,14 @@ def _strip_lines(reply: str, lines: set) -> str:
     return "\n".join(kept)
 
 
-def _needs_retry(reply: str, prev_assistant_reply: str, recent_replies: list) -> bool:
+def _needs_retry(reply: str, recent_replies: list) -> bool:
     """embeddingベースのmemory_searchは緩い話題の一致でもrecalledを返すため、
     「recalledが空でない=本当に前に話した」を判定材料にすると、日常会話的な
     質問(「今日はどんな感じだった」等)はほぼ常に何かしら引っかかってしまい、
     肝心の誤った決めつけを素通りさせてしまうことが実測で確認された。
     BEHAVIOR_RULES側で「本当に既出でも指摘しない」よう別途指示しているため、
     ここではrecalledの有無を見ずに、フレーズが出た時点で一律やり直す。"""
-    if _is_near_duplicate(reply, prev_assistant_reply):
+    if any(_is_near_duplicate(reply, r) for r in recent_replies):
         return True
     if _recycled_lines(reply, recent_replies):
         return True
@@ -270,7 +269,7 @@ MAX_HISTORY_MESSAGES = 20  # user/assistant合計の保持上限(古い分から
 
 MEMORY_DIR = os.path.join(os.path.dirname(__file__), "memory")
 ROLE_LABEL = {"user": "User", "assistant": "Rilin"}
-_ENTRY_RE = re.compile(r"^### \d\d:\d\d (User|Rilin)$")
+_ENTRY_RE = re.compile(r"^### (\d\d:\d\d) (User|Rilin)$")
 
 
 def _today_log_path() -> str:
@@ -287,21 +286,29 @@ def _load_recent_history(max_messages: int) -> list:
     label_to_role = {v: k for k, v in ROLE_LABEL.items()}
     messages = []
     for path in sorted(glob.glob(os.path.join(MEMORY_DIR, "*.md")), reverse=True):
+        day = os.path.basename(path)[: -len(".md")]
         with open(path) as f:
             lines = f.read().splitlines()
 
         entries = []
-        role, buf = None, []
+        role, at, buf = None, None, []
+
+        def flush():
+            entries.append(
+                {"role": label_to_role[role], "content": "\n".join(buf).strip(), "at": at}
+            )
+
         for line in lines:
             m = _ENTRY_RE.match(line)
             if m:
                 if role is not None:
-                    entries.append({"role": label_to_role[role], "content": "\n".join(buf).strip()})
-                role, buf = m.group(1), []
+                    flush()
+                at = datetime.strptime(f"{day} {m.group(1)}", "%Y-%m-%d %H:%M")
+                role, buf = m.group(2), []
             elif role is not None:
                 buf.append(line)
         if role is not None:
-            entries.append({"role": label_to_role[role], "content": "\n".join(buf).strip()})
+            flush()
 
         messages = entries + messages
         if len(messages) >= max_messages:
@@ -337,8 +344,24 @@ _STYLE_INSTRUCTION = (
 
 def _record(role: str, text: str) -> None:
     """historyへの追記とログへの追記をまとめて行う(generate/proactive_utterance共通)。"""
-    history.append({"role": role, "content": text})
+    history.append({"role": role, "content": text, "at": datetime.now()})
     _append_log(role, text)
+
+
+def _timestamped_messages(messages: list) -> list:
+    """LLMに渡す履歴のユーザー発言に時刻を付ける。時刻が無いと朝の会話が
+    「直前の流れ」に見え、夜に朝の返答を丸写しして昼夜を取り違えた実例が
+    ある(2026-10-30)。Rilin側に付けないのは、返答の頭に時刻を書く癖を
+    真似させないため。"""
+    today = date.today()
+    out = []
+    for m in messages:
+        content = m["content"]
+        if m["role"] == "user" and m.get("at"):
+            fmt = "%H:%M" if m["at"].date() == today else "%m/%d %H:%M"
+            content = f"[{m['at'].strftime(fmt)}] {content}"
+        out.append({"role": m["role"], "content": content})
+    return out
 
 
 def _recent_context_text(n: int = MAX_HISTORY_MESSAGES) -> str:
@@ -364,10 +387,7 @@ def _merge_consecutive_roles(messages: list) -> list:
 def generate(prompt: str) -> str:
     global last_reply_style
     with _history_lock:
-        recent_replies = [m["content"] for m in history if m["role"] == "assistant"][
-            -RECENT_REPLY_WINDOW:
-        ]
-        prev_assistant_reply = recent_replies[-1] if recent_replies else ""
+        recent_replies = [m["content"] for m in history if m["role"] == "assistant"]
 
         _record("user", prompt)
 
@@ -395,7 +415,7 @@ def generate(prompt: str) -> str:
             if twitter:
                 system_prompt += "\n\n" + twitter
 
-            messages = _merge_consecutive_roles(history)
+            messages = _merge_consecutive_roles(_timestamped_messages(history))
             reply = _llm_chat(system_prompt, messages)
 
             # プロンプト指示だけでは「前も言った」という事実に基づかない決めつけや、
@@ -405,7 +425,7 @@ def generate(prompt: str) -> str:
             # そのまま見せると同じ内容を模倣し続けてしまうため、今回の発言単体だけを
             # 渡してfew-shot的な模倣元を断つ。
             for _ in range(2):
-                if not _needs_retry(reply, prev_assistant_reply, recent_replies):
+                if not _needs_retry(reply, recent_replies):
                     break
                 reply = _llm_chat(
                     system_prompt + _RETRY_NOTE, [{"role": "user", "content": prompt}]
