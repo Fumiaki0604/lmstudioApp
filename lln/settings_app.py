@@ -1,4 +1,4 @@
-"""Rilinの設定画面(音声オンオフ・話者・ペルソナ)。
+"""Lilinの設定画面(音声オンオフ・話者・ペルソナ)。
 
 使い方:
     streamlit run settings_app.py
@@ -16,7 +16,7 @@ from converse import user_impression
 from mood import mood_label, mood_value
 from mood_images import MOOD_LABELS, get_mood_image, save_mood_image
 
-st.set_page_config(page_title="Rilin設定")
+st.set_page_config(page_title="Lilin設定")
 
 MOOD_LABEL_JA = {"good": "良い", "bad": "悪い", "neutral": "普通"}
 
@@ -26,7 +26,7 @@ def _image_to_base64(path: str) -> str:
         return base64.b64encode(f.read()).decode()
 
 
-st.title("Rilin 設定")
+st.title("Lilin 設定")
 
 
 @st.cache_data(ttl=300)
@@ -65,7 +65,7 @@ if _rec_dir:
     _elapsed = int((datetime.now() - datetime.fromisoformat(_rec_meta["started"])).total_seconds())
     st.info(
         f"録音中: {seminar.MODE_LABEL[_rec_meta['mode']]} · {_rec_meta.get('title') or '(タイトルなし)'} · "
-        f"{_elapsed // 60}分経過(最長{seminar.MAX_SEC // 3600}時間で自動停止)。録音中のRilinは返事をしない。"
+        f"{_elapsed // 60}分経過(最長{seminar.MAX_SEC // 3600}時間で自動停止)。録音中のLilinは返事をしない。"
     )
     stop_col, refresh_col = st.columns(2)
     with stop_col:
@@ -118,7 +118,7 @@ default_weather_location = st.text_input(
     "天気のデフォルト地点(場所を言わずに聞かれた時に使う)", value=cfg["default_weather_location"]
 )
 
-st.subheader("Rilinの記憶(事実メモ)")
+st.subheader("Lilinの記憶(事実メモ)")
 st.caption(
     "毎晩4時頃、前日の会話から自動で整理される(dreaming.py)。聞き間違いなどは文を直して"
     "Enterで即保存(直した項目は[手動]になり、自動整理で上書き・削除されなくなる)。"
