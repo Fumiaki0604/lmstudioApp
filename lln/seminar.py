@@ -226,7 +226,8 @@ _FINAL_PROMPT = (
     "(前置きや説明は書かない)。\n\n"
     "# タイトル(指定があればそれをそのまま使い、無ければ内容から短く付ける)\n\n"
     "## 要点\n- セミナー全体で重要な内容(最大10個。短いセミナーなら少なくてよい)\n\n"
-    "## 時間ごとの流れ\n- [h:mm:ss] 話題(全体の目次として読める粒度に整理する)\n\n"
+    "## 時間ごとの流れ\n- [h:mm:ss] 話題(全体の目次として読める粒度に整理する。時刻は各部分の"
+    "「流れ」に書かれた時刻をそのまま使い、新しい時刻を作ったり切りのいい値に丸めたりしない)\n\n"
     "## 質疑応答\n- **Q.** 質問\n  **A.** 回答\n"
     "(質疑応答が1つも無ければ「質疑応答はありませんでした。」とだけ書く。"
     "話者は区別できていないため、誰の発言かは推測しすぎない。"
@@ -251,7 +252,26 @@ def summarize(segments: list, title: str) -> str:
         print(f"[seminar] chunk {i + 1}/{len(chunks)} summarized", flush=True)
 
     user_content = f"【タイトルの指定】{title or '(なし)'}\n\n" + "\n\n".join(parts)
-    return _llm_chat(_FINAL_PROMPT, [{"role": "user", "content": user_content}], temperature=0.3, timeout=900, reasoning_effort="medium")
+    summary = _llm_chat(_FINAL_PROMPT, [{"role": "user", "content": user_content}], temperature=0.3, timeout=900, reasoning_effort="medium")
+    return _snap_timestamps(summary, segments)
+
+
+_TS_RE = re.compile(r"\[(\d+):(\d\d):(\d\d)\]")
+
+
+def _snap_timestamps(summary: str, segments: list) -> str:
+    """統合段階でLLMが時刻を「0:01:00, 0:02:00…」のように丸めて作り直す実例が
+    あったため(2026-10-31)、要約中の時刻を文字起こしに実在する発話開始時刻の
+    うち最も近いものに置き換える。録音を聞き直す時に頭出しできる時刻にするため。"""
+    starts = sorted({int(s["start"]) for s in segments})
+    if not starts:
+        return summary
+
+    def snap(m):
+        sec = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+        return f"[{_ts(min(starts, key=lambda t: abs(t - sec)))}]"
+
+    return _TS_RE.sub(snap, summary)
 
 
 def _discord_text(summary: str, meta: dict, duration: float) -> str:
