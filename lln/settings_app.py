@@ -4,12 +4,14 @@
     streamlit run settings_app.py
 """
 import base64
+from datetime import datetime
 
 import streamlit as st
 
 import config
 import facts
 import pronunciation_dict
+import seminar
 from converse import user_impression
 from mood import mood_label, mood_value
 from mood_images import MOOD_LABELS, get_mood_image, save_mood_image
@@ -55,6 +57,44 @@ mood_text_col, _ = st.columns([1, 2])
 with mood_text_col:
     st.text_input("今日の機嫌", value=f"{MOOD_LABEL_JA[mood_label()]}(値: {mood_value():.2f})", disabled=True)
 st.text_area("ユーザーへの印象", value=_cached_user_impression(), height=100, disabled=True)
+
+st.subheader("セミナー録音")
+_rec_dir = seminar.active()
+if _rec_dir:
+    _rec_meta = seminar.load_meta(_rec_dir)
+    _elapsed = int((datetime.now() - datetime.fromisoformat(_rec_meta["started"])).total_seconds())
+    st.info(
+        f"録音中: {seminar.MODE_LABEL[_rec_meta['mode']]} · {_rec_meta.get('title') or '(タイトルなし)'} · "
+        f"{_elapsed // 60}分経過(最長{seminar.MAX_SEC // 3600}時間で自動停止)。録音中のRilinは返事をしない。"
+    )
+    stop_col, refresh_col = st.columns(2)
+    with stop_col:
+        if st.button("録音停止", type="primary", use_container_width=True):
+            seminar.stop()
+            st.rerun()
+    with refresh_col:
+        if st.button("表示を更新", use_container_width=True):
+            st.rerun()
+else:
+    st.caption(
+        "オフライン=マイクで会場の音声を録る。オンライン=YouTube/Zoom等のPCの音を直接録る"
+        "(音量を下げてもイヤホンでも録れる)。停止後に文字起こし・要約してDiscordの#lilin_seminarに送る。"
+    )
+    _rec_title = st.text_input("タイトル(任意。空なら内容から自動で付ける)", key="rec_title")
+    mic_col, sys_col = st.columns(2)
+    for _col, _mode, _label in ((mic_col, "mic", "オフライン録音開始(マイク)"), (sys_col, "system", "オンライン録音開始(PCの音)")):
+        with _col:
+            if st.button(_label, use_container_width=True):
+                seminar.start(_mode, _rec_title)
+                st.rerun()
+
+_STATUS_JA = {"recording": "録音中", "processing": "処理中", "done": "完了", "error": "失敗"}
+with st.expander("最近の録音"):
+    for _d, _m in seminar.recent(10):
+        line = f"{_m.get('started', '')[:16].replace('T', ' ')} · {_STATUS_JA.get(_m.get('status'), _m.get('status'))} · {_m.get('title') or '(タイトルなし)'}"
+        if _m.get("error"):
+            line += f" — {_m['error']}"
+        st.write(line)
 
 cfg = config.load()
 

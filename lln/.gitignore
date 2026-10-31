@@ -6,3 +6,6 @@ config.json
 .venv311/
 goose_tasks/
 mood_images/
+seminars/
+rec.app/
+.venv_seminar/

@@ -24,6 +24,7 @@ import converse
 import discord_notify
 import dreaming
 import pronunciation_dict
+import seminar
 from converse import filler_phrase, generate, proactive_utterance, task_ack_phrase
 from gate import can_speak_now, in_quiet_hours
 from memory_search import update_interest_scores
@@ -69,6 +70,19 @@ GOOSE_TASK_DIR = os.path.join(os.path.dirname(__file__), "goose_tasks")
 # 五段動詞のテ形を取りこぼすため、「し」は要求しない。文末の「ね」「よ」
 # などの終助詞も素通りできるよう、句読点と合わせて末尾で許容する。
 _GOOSE_TRIGGER_RE = re.compile(r"^(.+?)ておいて[。、！!？?ねよなさ\s]*$")
+
+
+# セミナー録音の声での開始・停止。「録音しておいて」がGooseの「〜ておいて」に
+# 取られないよう、reactive_loopではGooseより先に判定する。
+_REC_START_RE = re.compile(r"録音(を)?(して|開始|はじめ|始め|スタート|お願い)")
+_REC_STOP_RE = re.compile(r"録音(を)?(終わり|おわり|終了|止め|とめ|停止|ストップ)")
+_REC_ONLINE_RE = re.compile(r"オンライン|パソコン|PC|ピーシー|内部|ズーム|Zoom|ユーチューブ|YouTube", re.I)
+
+
+def seminar_start_mode(text: str):
+    if not _REC_START_RE.search(text) or _REC_STOP_RE.search(text):
+        return None
+    return "system" if _REC_ONLINE_RE.search(text) else "mic"
 
 
 def extract_goose_task(text: str):
@@ -332,6 +346,15 @@ def reactive_loop() -> None:
             else:
                 continue
             text = event.get("text", "").strip()
+            # セミナー録音中は「録音終わり」以外に一切反応しない(セミナーの音声を
+            # 自分への発話と取り違えるため)。停止は静かな時間帯でも受け付ける。
+            if seminar.is_recording():
+                if _REC_STOP_RE.search(text):
+                    print(f"[seminar] stop by voice: {text}")
+                    seminar.stop()
+                    speak_text("録音を止めたよ。まとめ終わったらDiscordに送るね。")
+                    last_interaction_time = time.time()
+                continue
             if time.time() < echo_guard_until:
                 # is_echo()の文字列一致はECHO_FRAGMENT_MIN_LEN未満の短い語
                 # (「ふみくん」のような呼び名の断片など)を判定対象外にしている
@@ -361,6 +384,22 @@ def reactive_loop() -> None:
             #     text = strip_wake_word(text)
             #     if not text:
             #         continue
+
+            rec_mode = seminar_start_mode(text)
+            if rec_mode:
+                print(f"[seminar] start by voice ({rec_mode}): {text}")
+                # 自分の声が録音に入らないよう、話し終えてから録音を始める
+                speak_text(
+                    "パソコンの音を録音するね。終わったら「録音終わり」って言って。"
+                    if rec_mode == "system"
+                    else "録音するね。終わったら「録音終わり」って言って。"
+                )
+                try:
+                    seminar.start(rec_mode)
+                except Exception as e:
+                    print(f"[error] seminar start: {e}")
+                last_interaction_time = time.time()
+                continue
 
             goose_task = extract_goose_task(text)
             try:
@@ -406,6 +445,10 @@ def proactive_loop() -> None:
                 print(f"[dreaming] {n} changes")
             except Exception as e:
                 print(f"[error] dreaming: {e}")
+            try:
+                seminar.cleanup_old_audio()
+            except Exception as e:
+                print(f"[error] seminar cleanup: {e}")
             last_janitor_date = today
 
         if not in_quiet_hours() and last_interaction_time > last_interest_update_time:
@@ -416,6 +459,8 @@ def proactive_loop() -> None:
             last_interest_update_time = time.time()
 
         if time.time() - last_interaction_time < SILENCE_THRESHOLD_SEC:
+            continue
+        if seminar.is_recording():
             continue
         if not can_speak_now():
             continue
