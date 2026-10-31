@@ -39,6 +39,7 @@ TRANSCRIBE_SCRIPT = os.path.join(BASE_DIR, "seminar_transcribe.py")
 MAX_SEC = 3 * 60 * 60  # 停止し忘れても、この時間でRilinを通常モードに戻す
 CHUNK_SEC = 15 * 60  # 長文を一度に要約すると中盤が薄くなるため、この単位で要約してから統合する
 MIN_DURATION_SEC = 10
+SEGMENT_SEC = 300  # rec.appがファイルを分ける間隔。録音中はこの単位で順に文字起こしを進めておく
 AUDIO_RETENTION_DAYS = 30
 MODE_LABEL = {"mic": "オフライン(マイク)", "system": "オンライン(PCの音)", "file": "ファイル"}
 
@@ -147,6 +148,7 @@ def supervise(d: str) -> None:
         [
             "open", "-n", REC_APP, "--stdout", os.path.join(d, "rec.log"), "--stderr", os.path.join(d, "rec.log"),
             "--args", "--mode", meta["mode"], "--out", d, "--max-sec", str(MAX_SEC),
+            "--segment-sec", str(SEGMENT_SEC),
         ],
         check=True,
     )
@@ -155,9 +157,111 @@ def supervise(d: str) -> None:
         time.sleep(0.5)
     pid = _rec_pid(d)
     while pid and _alive(pid):
+        # 録音中に、書き終わった5分ファイルから順に文字起こししておく。質問候補を
+        # すぐ出せるようにするためと、録音後の処理を短くするため
+        for idx in _completed_segments(d):
+            if not os.path.exists(_part_path(d, idx)):
+                _transcribe_segment(d, idx)
         time.sleep(2)
     _update_meta(d, ended=datetime.now().isoformat(timespec="seconds"))
     process(d)
+
+
+# ---------------------------------------------------------------------------
+# 5分ファイル単位の文字起こし
+# ---------------------------------------------------------------------------
+
+
+def _segment_paths(d: str) -> list:
+    return sorted(glob.glob(os.path.join(d, "seg_*.pcm")))
+
+
+def _seg_index(path: str) -> int:
+    return int(os.path.basename(path)[4:7])
+
+
+def _completed_segments(d: str) -> list:
+    """書き終わったファイル(=次のファイルが既にあるもの)の番号。最後の1つは書き込み中。"""
+    return [_seg_index(p) for p in _segment_paths(d)[:-1]]
+
+
+def _part_path(d: str, idx: int) -> str:
+    return os.path.join(d, f"part_{idx:03d}.json")
+
+
+def _run_transcribe(in_path: str, out_path: str, offset: float) -> list:
+    tmp = out_path + ".tmp"
+    subprocess.run([VENV_PY, TRANSCRIBE_SCRIPT, in_path, tmp, str(offset)], check=True)
+    os.replace(tmp, out_path)  # 監視プロセスと質問候補の生成が同時に書いても、読み手が書きかけを掴まないように
+    with open(out_path) as f:
+        return json.load(f)["segments"]
+
+
+def _transcribe_segment(d: str, idx: int) -> list:
+    path = os.path.join(d, f"seg_{idx:03d}.pcm")
+    return _run_transcribe(path, _part_path(d, idx), idx * SEGMENT_SEC)
+
+
+def _transcript_so_far(d: str, include_current: bool) -> list:
+    """録音済みの分の文字起こし。include_currentなら書き込み中のファイルもその時点までを読む。"""
+    segments = []
+    paths = _segment_paths(d)
+    for i, path in enumerate(paths):
+        idx = _seg_index(path)
+        if os.path.exists(_part_path(d, idx)):
+            with open(_part_path(d, idx)) as f:
+                segments += json.load(f)["segments"]
+        elif i < len(paths) - 1:
+            segments += _transcribe_segment(d, idx)
+        elif include_current:
+            snapshot = os.path.join(d, "current_snapshot.pcm")
+            with open(path, "rb") as src, open(snapshot, "wb") as dst:
+                dst.write(src.read())
+            segments += _run_transcribe(snapshot, os.path.join(d, "current_snapshot.json"), idx * SEGMENT_SEC)
+            for p in (snapshot, os.path.join(d, "current_snapshot.json")):
+                os.remove(p)
+        else:
+            segments += _transcribe_segment(d, idx)
+    return segments
+
+
+# ---------------------------------------------------------------------------
+# 質疑応答で聞く質問の候補
+# ---------------------------------------------------------------------------
+
+_QUESTIONS_PROMPT = (
+    "あなたは、セミナーに参加しているユーザーのアシスタントです。以下は、ここまでの講演を"
+    "自動で文字起こししたものです(音声認識の聞き間違いを含むので文脈から補って解釈する)。"
+    "このあとの質疑応答でユーザーが講師に聞くと有意義な質問を5つ考えてください。\n"
+    "- 講演の中で既に説明されたことをそのまま聞き返す質問は避ける\n"
+    "- 「さっきの〜の話で」のように講演のどこを受けた質問か分かるようにし、具体的にする\n"
+    "- その場で口に出してそのまま言える、1〜2文の自然な話し言葉にする\n"
+    "- 深掘り・実践での使い方・前提や限界の確認など、なるべく種類をばらけさせる\n"
+    "以下の形式のMarkdownだけを返す(前置きや説明は書かない):\n"
+    "1. 質問文\n   - ねらい: なぜこの質問が有意義か(短く)"
+)
+
+
+def suggest_questions(d: str) -> str:
+    """ここまでの講演内容から質問候補を作り、questions.mdに追記して返す。"""
+    from converse import _llm_chat
+
+    segments = _transcript_so_far(d, include_current=True)
+    if not segments:
+        raise RuntimeError("まだ講演の言葉を聞き取れていません")
+    text = "\n".join(f"[{_ts(s['start'])}] {s['text']}" for s in segments)
+    questions = _llm_chat(_QUESTIONS_PROMPT, [{"role": "user", "content": text}], temperature=0.5, timeout=600, reasoning_effort="low")
+    with open(os.path.join(d, "questions.md"), "a") as f:
+        f.write(f"## {datetime.now().strftime('%H:%M')}時点(講演{_ts(segments[-1]['end'])}まで)\n{questions}\n\n")
+    return questions
+
+
+def load_questions(d: str) -> str:
+    path = os.path.join(d, "questions.md")
+    if not os.path.exists(path):
+        return ""
+    with open(path) as f:
+        return f.read()
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +396,8 @@ def process(d: str) -> None:
     webhook = config.load().get("discord_seminar_webhook_url", "")
     try:
         wav = os.path.join(d, "audio.wav")
-        if glob.glob(os.path.join(d, "seg_*.pcm")):
+        recorded = bool(_segment_paths(d))
+        if recorded:
             wav = _concat_pcm(d)
         duration = _wav_duration(wav)
         if duration < MIN_DURATION_SEC:
@@ -300,9 +405,13 @@ def process(d: str) -> None:
 
         print(f"[seminar] transcribing {_ts(duration)}", flush=True)
         transcript_json = os.path.join(d, "transcript.json")
-        subprocess.run([VENV_PY, TRANSCRIBE_SCRIPT, wav, transcript_json], check=True)
-        with open(transcript_json) as f:
-            segments = json.load(f)["segments"]
+        if recorded:
+            # 録音中に済ませた5分ファイル分は使い回し、残りだけ文字起こしする
+            segments = _transcript_so_far(d, include_current=False)
+            with open(transcript_json, "w") as f:
+                json.dump({"duration": round(duration, 1), "segments": segments}, f, ensure_ascii=False)
+        else:
+            segments = _run_transcribe(wav, transcript_json, 0.0)
         if not segments:
             raise RuntimeError("音声から言葉を聞き取れませんでした")
         transcript_md = os.path.join(d, "transcript.md")
@@ -319,7 +428,7 @@ def process(d: str) -> None:
 
         # 聞き直し用に圧縮して残す(2時間で約30MB)。元のWAV・PCMは消す
         subprocess.run(["afconvert", "-f", "m4af", "-d", "aac", "-b", "32000", wav, os.path.join(d, "audio.m4a")], check=True)
-        for p in [wav] + glob.glob(os.path.join(d, "seg_*.pcm")):
+        for p in [wav] + _segment_paths(d) + glob.glob(os.path.join(d, "part_*.json")):
             os.remove(p)
         _update_meta(d, status="done", title=meta.get("title") or title, duration=round(duration))
         print("[seminar] done", flush=True)
