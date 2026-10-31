@@ -80,9 +80,18 @@ default_weather_location = st.text_input(
 
 st.subheader("Rilinの記憶(事実メモ)")
 st.caption(
-    "毎晩4時頃、前日の会話から自動で整理される(dreaming.py)。間違っている項目は削除する。"
-    "一時・話題は期限が過ぎると自動で消える。追加や[手動]指定は memory/_dreaming/facts.md を直接編集する。"
+    "毎晩4時頃、前日の会話から自動で整理される(dreaming.py)。聞き間違いなどは文を直して"
+    "Enterで即保存(直した項目は[手動]になり、自動整理で上書き・削除されなくなる)。"
+    "一時・話題は期限が過ぎると自動で消える。"
 )
+
+
+def _on_fact_edit(fact_id: str, key: str) -> None:
+    text = st.session_state[key].strip()
+    if text:
+        facts.edit_text(fact_id, text)
+
+
 _all_facts = facts.load()
 _alive_ids = {f["id"] for f in facts.active(_all_facts)}
 for _category in facts.CATEGORIES:
@@ -92,8 +101,17 @@ for _category in facts.CATEGORIES:
         text_col, del_col = st.columns([6, 1])
         with text_col:
             meta = f["source"] + (f" → {f['expires']}" if f.get("expires") else "")
-            st.markdown(f"{f['text']}  \n<small style='opacity:0.6'>{f['id']} · {meta}</small>", unsafe_allow_html=True)
+            # keyに本文を含め、保存やdreamingで本文が変わったら入力欄も作り直す
+            key = f"fact_{f['id']}_{f['text']}"
+            st.text_input(
+                f"{f['id']} · {meta}",
+                value=f["text"],
+                key=key,
+                on_change=_on_fact_edit,
+                args=(f["id"], key),
+            )
         with del_col:
+            st.write("")  # 入力欄のラベル分だけボタンを下げて行を揃える
             if st.button("削除", key=f"del_fact_{f['id']}"):
                 facts.delete(f["id"])
                 st.rerun()

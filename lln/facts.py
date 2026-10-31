@@ -79,6 +79,16 @@ def delete(fact_id: str) -> None:
     save([f for f in load() if f["id"] != fact_id])
 
 
+def edit_text(fact_id: str, text: str) -> None:
+    """手で直した項目は[手動]にして、dreaming.pyに上書き・削除させない(期限はそのまま)。"""
+    items = load()
+    for f in items:
+        if f["id"] == fact_id:
+            f["text"] = text.strip()
+            f["source"] = MANUAL
+    save(items)
+
+
 def _short_date(iso: str) -> str:
     return f"{int(iso[5:7])}/{int(iso[8:10])}"
 
