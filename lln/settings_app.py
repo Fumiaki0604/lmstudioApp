@@ -160,8 +160,10 @@ pronunciation_entries = st.data_editor(
 )
 
 if st.button("保存", type="primary"):
+    # 画面に出していない項目(discord_*_webhook_url等)を消さないよう、既存の設定に上書きする
     config.save(
         {
+            **config.load(),
             "listening_enabled": listening_enabled,
             "voice_enabled": voice_enabled,
             "speaker": speaker,
