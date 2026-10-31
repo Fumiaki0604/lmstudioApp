@@ -22,8 +22,9 @@ from janome.tokenizer import Tokenizer
 import config
 import converse
 import discord_notify
+import dreaming
 import pronunciation_dict
-from converse import filler_phrase, generate, proactive_utterance, task_ack_phrase, update_user_profile
+from converse import filler_phrase, generate, proactive_utterance, task_ack_phrase
 from gate import can_speak_now, in_quiet_hours
 from memory_search import update_interest_scores
 from speak import SPEAKERS, play, synthesize
@@ -386,7 +387,7 @@ def reactive_loop() -> None:
 
 def proactive_loop() -> None:
     global last_interaction_time
-    last_profile_update_time = 0.0
+    last_interest_update_time = 0.0
     last_janitor_date = None
     while True:
         time.sleep(CHECK_INTERVAL_SEC)
@@ -399,18 +400,20 @@ def proactive_loop() -> None:
                 print(f"[janitor] quarantined {n} entries")
             except Exception as e:
                 print(f"[error] log janitor: {e}")
+            # 整理済みのログから事実メモを更新する(janitorの後に行う)
+            try:
+                n = dreaming.run()
+                print(f"[dreaming] {n} changes")
+            except Exception as e:
+                print(f"[error] dreaming: {e}")
             last_janitor_date = today
 
-        if not in_quiet_hours() and last_interaction_time > last_profile_update_time:
-            try:
-                update_user_profile()
-            except Exception as e:
-                print(f"[error] profile update: {e}")
+        if not in_quiet_hours() and last_interaction_time > last_interest_update_time:
             try:
                 update_interest_scores()
             except Exception as e:
                 print(f"[error] interest scoring: {e}")
-            last_profile_update_time = time.time()
+            last_interest_update_time = time.time()
 
         if time.time() - last_interaction_time < SILENCE_THRESHOLD_SEC:
             continue

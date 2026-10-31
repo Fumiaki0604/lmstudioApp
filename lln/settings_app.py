@@ -8,6 +8,7 @@ import base64
 import streamlit as st
 
 import config
+import facts
 import pronunciation_dict
 from converse import user_impression
 from mood import mood_label, mood_value
@@ -77,11 +78,25 @@ default_weather_location = st.text_input(
     "天気のデフォルト地点(場所を言わずに聞かれた時に使う)", value=cfg["default_weather_location"]
 )
 
-user_profile = st.text_area(
-    "ユーザープロフィール(名前・属性など、毎回そのままRilinに伝える固定情報)",
-    value=cfg["user_profile"],
-    height=100,
+st.subheader("Rilinの記憶(事実メモ)")
+st.caption(
+    "毎晩4時頃、前日の会話から自動で整理される(dreaming.py)。間違っている項目は削除する。"
+    "一時・話題は期限が過ぎると自動で消える。追加や[手動]指定は memory/_dreaming/facts.md を直接編集する。"
 )
+_all_facts = facts.load()
+_alive_ids = {f["id"] for f in facts.active(_all_facts)}
+for _category in facts.CATEGORIES:
+    _items = [f for f in _all_facts if f["category"] == _category and f["id"] in _alive_ids]
+    st.markdown(f"**{_category}**({len(_items)}件)")
+    for f in _items:
+        text_col, del_col = st.columns([6, 1])
+        with text_col:
+            meta = f["source"] + (f" → {f['expires']}" if f.get("expires") else "")
+            st.markdown(f"{f['text']}  \n<small style='opacity:0.6'>{f['id']} · {meta}</small>", unsafe_allow_html=True)
+        with del_col:
+            if st.button("削除", key=f"del_fact_{f['id']}"):
+                facts.delete(f["id"])
+                st.rerun()
 
 st.subheader("見た目(機嫌別の画像)")
 st.caption("機嫌(良い/普通/悪い)ごとに画像をアップロードできる。アップロードすると即座に反映される(保存ボタン不要)。")
@@ -135,7 +150,7 @@ if st.button("保存", type="primary"):
             "style": style,
             "persona_prompt": persona_prompt,
             "default_weather_location": default_weather_location,
-            "user_profile": user_profile,
+            "user_profile": cfg["user_profile"],  # 旧方式(事実メモに移行済み)。値だけ保持する
             "pronunciation_entries": pronunciation_entries,
         }
     )

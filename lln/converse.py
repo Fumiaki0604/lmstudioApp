@@ -8,6 +8,7 @@ import argparse
 import difflib
 import glob
 import os
+import random
 import re
 import threading
 from datetime import date, datetime
@@ -16,6 +17,7 @@ import jpholiday
 import requests
 
 import config
+import facts
 import log_janitor
 from log_janitor import normalize_line, significant_lines
 from memory_search import search as search_memory
@@ -49,7 +51,7 @@ def _llm_chat(
     "low"を試した際、thinking_token_budgetを絞ると生の思考過程が音声として
     読み上げられる内容に漏れて会話が破綻し、絞らなければ応答が10秒近く
     掛かる(会話のテンポを著しく損なう)ことを実測で確認済みのため。
-    一方、update_user_profile()やuser_impression()のようにユーザーの発話を
+    一方、dreaming.pyやuser_impression()のようにユーザーの発話を
     即座に待たせない非会話系の裏方処理(定期実行/管理画面表示用)は、
     reasoning_effortを呼び出し側で明示的に上げてよい(_llm_chat自体の
     デフォルトは引き続き"none")。
@@ -189,8 +191,10 @@ def _persona_system_prompt(cfg: dict, *, include_now: bool = False, include_prof
     system_prompt = cfg["persona_prompt"] + "\n\n" + BEHAVIOR_RULES
     if include_now:
         system_prompt += "\n\n" + _now_context()
-    if include_profile and cfg["user_profile"]:
-        system_prompt += "\n\n【ユーザーについて】\n" + cfg["user_profile"]
+    if include_profile:
+        known = facts.prompt_text()
+        if known:
+            system_prompt += "\n\n" + known
     mood = mood_instruction()
     if mood:
         system_prompt += "\n\n" + mood
@@ -467,6 +471,20 @@ def clean_logs() -> int:
     return n
 
 
+FOLLOWUP_TOPIC_PROB = 0.5  # 毎回続きを聞くと尋問のようになるため、半分は普通の話しかけにする
+_asked_topics = {}  # 話題id → 聞いた日。同じ話題を同じ日に何度も聞かない
+
+
+def _pick_followup_topic():
+    today = date.today()
+    candidates = [t for t in facts.open_topics() if _asked_topics.get(t["id"]) != today]
+    if not candidates or random.random() >= FOLLOWUP_TOPIC_PROB:
+        return None
+    topic = random.choice(candidates)
+    _asked_topics[topic["id"]] = today
+    return topic
+
+
 def proactive_utterance(prompt: str) -> str:
     """能動的な一言を生成する。長時間の沈黙の後に呼ばれるため、直前の
     (古くなっていたり認識ミスの断片かもしれない)会話履歴には引っ張られず、
@@ -487,6 +505,12 @@ def proactive_utterance(prompt: str) -> str:
     with _history_lock:
         cfg = config.load()
         system_prompt = _persona_system_prompt(cfg, include_now=True, include_profile=True)
+        topic = _pick_followup_topic()
+        if topic:
+            system_prompt += (
+                f"\n\n【今回の話しかけ】前に話していた次の件の続きを、自然に聞いてみてください:"
+                f"{topic['text']}({topic['source'][5:].replace('-', '/')}の話)"
+            )
 
         text = _llm_chat(
             system_prompt, [{"role": "user", "content": prompt}], temperature=0.8, timeout=30
@@ -540,92 +564,6 @@ def task_ack_phrase() -> str:
         temperature=0.8,
         timeout=30,
     )
-
-
-_TRANSIENT_KEYWORDS = (
-    "今日", "本日", "現在", "今", "祝日", "休日", "休み", "月", "日まで", "曜日",
-    "天気", "雨", "晴れ", "曇り", "雪", "気温", "喉", "体調", "食欲", "疲れ",
-    "さっき", "先ほど", "直近",
-)
-
-
-def _is_transient_line(line: str) -> bool:
-    return any(k in line for k in _TRANSIENT_KEYWORDS)
-
-
-_USER_PROFILE_SYSTEM_PROMPT = "\n\n".join([
-    "以下は現在のユーザープロフィールと直近の会話ログです。"
-    "プロフィールに書いてよいのは、今日を過ぎても来月になっても"
-    "ずっと変わらず正しいと言える事実(名前、仕事、性格傾向、"
-    "長期的な習慣、好み)だけです。",
-
-    "書いてはいけない例(NG): 「喉の調子が悪い」「今日は祝日」"
-    "「休み中である」「〜月〜日まで休み」「今、掃除をしている」"
-    "「食欲が無い」「雨が降っている」「さっき〜を食べた」のような、"
-    "今日・今週限定で正しい状態・体調・予定・天気・直近の出来事は"
-    "一切書かないでください。判断に迷ったら書かないことを選んで"
-    "ください。そういう情報は別の仕組みで会話ログから都度検索される"
-    "ので、ここに書く必要はありません。",
-
-    "また、会話から推測した性格・行動傾向・関係性の解釈("
-    "「〜の指示を優先する傾向がある」「〜に頼りがちである」の"
-    "ような憶測)を書くのも禁止です。書いてよいのは、本人が"
-    "明確に述べた事実(名前、仕事、誰それという人物がいる、など)"
-    "だけです。関係者について書く時も「〜という人物がいる」の"
-    "ように中立的な事実として書き、その人物との関係性や態度を"
-    "推測しないでください。",
-
-    "会話ログは音声認識(STT)を通しているため、聞き間違いが"
-    "含まれます。「〇〇です」のような自己紹介の形で明確に名乗って"
-    "いない限り、会話ログ中の単語をユーザーの名前だと推測しないで"
-    "ください(例: 挨拶の聞き間違いが人名に見えることがあります)。"
-    "また、「リリ」「リリン」はユーザーと話しているAIアシスタント"
-    "自身の名前であり、ユーザーの関係者ではありません。ユーザーの"
-    "関係者として記録しないでください。",
-
-    "STTの聞き間違いは、意味の通らない単語や短い断片として"
-    "唐突に一度だけ現れることが多いです。会話の前後関係から"
-    "見て明らかに文脈と繋がっておらず、何を指すのか判然としない"
-    "固有名詞らしき単語は、聞き間違いの可能性が高いので、"
-    "「〜という人物がいる」のような事実として記録しないでください。"
-    "はっきりと意味の通る文脈で言及された場合のみ記録してください。",
-
-    "会話から上記の意味での恒久的な事実が新たに分かった場合のみ、"
-    "既存のプロフィールに追記・統合してください。矛盾する情報が"
-    "あれば新しい方を優先してください。恒久的な事実が何も無ければ、"
-    "既存のプロフィールをそのまま返してください。事実のみを簡潔な"
-    "箇条書きで返してください。プロフィール本文以外の説明や前置きは"
-    "書かないこと。",
-])
-
-
-def update_user_profile() -> None:
-    """会話から分かったユーザー情報を、既存プロフィールに追記・統合する。
-    設定画面で手入力した内容も尊重しつつ、新しく分かった事実だけ足す。
-    プロンプトだけでは一時的な情報(今日の体調・天気など)が混ざるのを
-    防ぎきれないため、キーワードベースの事後フィルタでも弾く。"""
-    cfg = config.load()
-    current_profile = cfg.get("user_profile", "")
-    context = _recent_context_text()
-    if not context:
-        return
-
-    user_content = f"【現在のプロフィール】\n{current_profile or '(まだ何も分かっていません)'}\n\n【直近の会話】\n{context}"
-
-    raw_profile = _llm_chat(
-        _USER_PROFILE_SYSTEM_PROMPT,
-        [{"role": "user", "content": user_content}],
-        temperature=0.3,
-        timeout=120,
-        reasoning_effort="low",
-    )
-    new_profile = "\n".join(
-        line for line in raw_profile.splitlines() if not _is_transient_line(line)
-    ).strip()
-
-    cfg = config.load()  # 保存直前に再取得(設定画面での手動編集との競合を減らす)
-    cfg["user_profile"] = new_profile
-    config.save(cfg)
 
 
 def user_impression() -> str:
