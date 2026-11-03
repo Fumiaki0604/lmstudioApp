@@ -445,6 +445,11 @@ def proactive_loop() -> None:
                 print(f"[dreaming] {n} changes")
             except Exception as e:
                 print(f"[error] dreaming: {e}")
+            # 設定画面を開いた時に待たせないよう、今日の分の印象を先に作っておく
+            try:
+                converse.daily_user_impression()
+            except Exception as e:
+                print(f"[error] user impression: {e}")
             try:
                 seminar.cleanup_old_audio()
             except Exception as e:

@@ -7,6 +7,7 @@
 import argparse
 import difflib
 import glob
+import json
 import os
 import random
 import re
@@ -564,6 +565,28 @@ def task_ack_phrase() -> str:
         temperature=0.8,
         timeout=30,
     )
+
+
+IMPRESSION_CACHE_PATH = os.path.join(MEMORY_DIR, "_dreaming", "impression.json")
+
+
+def daily_user_impression() -> str:
+    """user_impression()を1日1回だけ生成してファイルに保存し、同じ日はそれを返す。
+    設定画面を開くたびに生成すると表示が遅くなるため。メモリ上のキャッシュだと
+    設定画面の再起動で消えるのでファイルに持つ。assistant.pyの夜間処理で先に作っておく。"""
+    today = date.today().isoformat()
+    try:
+        with open(IMPRESSION_CACHE_PATH) as f:
+            cached = json.load(f)
+        if cached.get("date") == today:
+            return cached["text"]
+    except (OSError, ValueError, KeyError):
+        pass
+    text = user_impression()
+    os.makedirs(os.path.dirname(IMPRESSION_CACHE_PATH), exist_ok=True)
+    with open(IMPRESSION_CACHE_PATH, "w") as f:
+        json.dump({"date": today, "text": text}, f, ensure_ascii=False)
+    return text
 
 
 def user_impression() -> str:

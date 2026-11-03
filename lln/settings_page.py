@@ -6,7 +6,7 @@ import streamlit as st
 import config
 import facts
 import pronunciation_dict
-from converse import user_impression
+from converse import daily_user_impression
 from mood import mood_label, mood_value
 from mood_images import MOOD_LABELS, get_mood_image, save_mood_image
 
@@ -19,11 +19,6 @@ def _image_to_base64(path: str) -> str:
 
 
 st.title("Lilin 設定")
-
-
-@st.cache_data(ttl=300)
-def _cached_user_impression() -> str:
-    return user_impression()
 
 
 status_header_col, mood_image_col = st.columns([2, 1])
@@ -48,7 +43,7 @@ with mood_image_col:
 mood_text_col, _ = st.columns([1, 2])
 with mood_text_col:
     st.text_input("今日の機嫌", value=f"{MOOD_LABEL_JA[mood_label()]}(値: {mood_value():.2f})", disabled=True)
-st.text_area("ユーザーへの印象", value=_cached_user_impression(), height=100, disabled=True)
+st.text_area("ユーザーへの印象(1日1回更新)", value=daily_user_impression(), height=100, disabled=True)
 
 cfg = config.load()
 
