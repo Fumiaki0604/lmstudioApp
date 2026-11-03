@@ -321,7 +321,29 @@ _CHUNK_PROMPT = (
     "以下の形式のMarkdownだけを返してください(前置きや説明は書かない)。\n\n"
     "### 流れ\n- [h:mm:ss] その時刻から話された話題(数分おきに1行。時刻は文字起こしの時刻を使う)\n"
     "### 要点\n- この部分で語られた重要な内容(最大6個。内容が少なければ少なくてよい)\n"
-    "### 質疑応答\n- Q: 質問 / A: 回答(この部分に質疑応答が無ければ「なし」とだけ書く)"
+    "### 質疑応答\n- Q: 質問 / A: 回答(この部分に質疑応答が無ければ「なし」とだけ書く)\n"
+    "### 疑問点\n- [h:mm:ss] 種類: 内容(種類は「説明不足」「事実と異なる可能性」「疑問」のいずれか。"
+    "聞き手の立場で、説明が足りない・根拠が示されていない・一般的な事実と食い違うと思われる・"
+    "疑問が残る箇所を挙げる。音声認識の聞き間違いが原因と思われるものは挙げない。"
+    "無ければ「なし」とだけ書く)"
+)
+
+_DOUBTS_PROMPT = (
+    "あなたはセミナーの記録係です。以下は、セミナーの各部分から挙げた疑問点の候補と、"
+    "セミナー全体の文字起こし(音声認識の聞き間違いを含む)です。疑問点を整理し、"
+    "以下の形式のMarkdownだけを返してください(前置きや説明は書かない)。\n\n"
+    "## 疑問点・要確認事項\n"
+    "- **[h:mm:ss] 種類** 内容\n"
+    "  - → **[h:mm:ss] で解消**: どう説明されて解消したか(その後の文字起こしで説明・訂正されていた場合だけ書く)\n\n"
+    "守ること:\n"
+    "- 種類は「説明不足」「事実と異なる可能性」「疑問」のいずれか\n"
+    "- 文字起こしを最後まで読み、後の時間帯で説明・補足・訂正されていれば必ず「解消」を追記する。"
+    "一部だけ説明された場合は「一部解消」と書き、残った点を添える\n"
+    "- 「事実と異なる可能性」は、あなたの知識に基づく指摘であり古い・誤っている可能性もあるため、"
+    "断定せず「〜とされることが多い」「要確認」のように書く\n"
+    "- 同じ内容の重複はまとめる。音声認識の聞き間違いが原因と思われるものは除く\n"
+    "- 時刻は候補や文字起こしにある時刻をそのまま使う\n"
+    "- 該当が1つも無ければ、見出しの下に「特にありませんでした。」とだけ書く"
 )
 
 _FINAL_PROMPT = (
@@ -357,7 +379,25 @@ def summarize(segments: list, title: str) -> str:
 
     user_content = f"【タイトルの指定】{title or '(なし)'}\n\n" + "\n\n".join(parts)
     summary = _llm_chat(_FINAL_PROMPT, [{"role": "user", "content": user_content}], temperature=0.3, timeout=900, reasoning_effort="medium")
+    summary = summary.rstrip() + "\n\n" + _review_doubts(parts, segments, _llm_chat)
     return _snap_timestamps(summary, segments)
+
+
+def _review_doubts(parts: list, segments: list, llm_chat) -> str:
+    """各部分で挙げた疑問点が、セミナーの後半で解消されたかを全文と照らして判定する。
+    部分ごとの要約だけでは、後の部分で説明されたことに気付けないため、全文を渡す。"""
+    candidates = []
+    for part in parts:
+        m = re.search(r"### 疑問点\n(.*?)(?=\n### |\Z)", part, re.S)
+        if m and m.group(1).strip() not in ("", "なし", "- なし"):
+            candidates.append(m.group(1).strip())
+    if not candidates:
+        return "## 疑問点・要確認事項\n特にありませんでした。"
+    transcript = "\n".join(f"[{_ts(s['start'])}] {s['text']}" for s in segments)
+    user_content = "【疑問点の候補】\n" + "\n".join(candidates) + "\n\n【文字起こし全文】\n" + transcript
+    result = llm_chat(_DOUBTS_PROMPT, [{"role": "user", "content": user_content}], temperature=0.3, timeout=900, reasoning_effort="medium")
+    print("[seminar] doubts reviewed", flush=True)
+    return result.strip()
 
 
 _TS_RE = re.compile(r"\[(\d+):(\d\d):(\d\d)\]")
@@ -384,7 +424,13 @@ def _discord_text(summary: str, meta: dict, duration: float) -> str:
     points = m.group(1).strip() if m else ""
     started = meta.get("started", "")[:16].replace("T", " ")
     header = f"**{title}**\n{started} · {MODE_LABEL.get(meta.get('mode'), '')} · {_ts(duration)}\n\n"
-    footer = "\n\n時間ごとの流れ・質疑応答・全文の文字起こしは添付ファイルを見てね。"
+    doubts = re.search(r"## 疑問点・要確認事項\n(.*?)(?=\n## |\Z)", summary, re.S)
+    n_doubts = len(re.findall(r"^- ", doubts.group(1), re.M)) if doubts else 0
+    n_resolved = len(re.findall(r"^\s+- → ", doubts.group(1), re.M)) if doubts else 0
+    footer = (
+        (f"\n\n疑問点・要確認事項: {n_doubts}件(うち解消 {n_resolved}件)" if n_doubts else "")
+        + "\n\n時間ごとの流れ・質疑応答・疑問点・全文の文字起こしは添付ファイルを見てね。"
+    )
     room = discord_notify.DISCORD_MESSAGE_LIMIT - len(header) - len(footer) - 10
     if len(points) > room:
         points = points[:room] + "…"
