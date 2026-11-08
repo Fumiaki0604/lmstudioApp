@@ -1,7 +1,7 @@
 """connpassの新着イベントから、ユーザーが興味を持ちそうな勉強会を選んでおく。
 
 新着フィード(ja.atom)は最新10件しか載らないため、assistant.pyのスレッドが
-30分ごとに取りに行って未見のものを溜め、毎日17時以降に1回まとめて判定する。場所(オンライン/東京/神奈川)は
+10〜18時の2時間おきに取りに行って未見のものを溜め、18時の取得後に1回まとめて判定する。場所(オンライン/東京/神奈川)は
 コードで絞り、興味の判定は事実メモ+設定画面のキーワードを元にLLMが行う。
 選んだものはproactive_utterance()が話題として1件ずつ口頭で紹介する。
 
@@ -22,10 +22,10 @@ import facts
 from converse import _llm_chat
 
 FEED_URL = "https://connpass.com/explore/ja.atom"
-# フィードは最新10件しか載らず1日1回の取得では大半を取りこぼすため、取得は30分ごとに
-# 行って溜めておき、LLMでの判定と紹介は1日1回(JUDGE_HOUR以降)にまとめる
-POLL_INTERVAL_SEC = 1800
-JUDGE_HOUR = 17
+# 取得は日中に数回行って溜めておき、LLMでの判定と紹介は1日1回(JUDGE_HOUR以降)にまとめる
+FETCH_HOURS = (10, 12, 14, 16, 18)
+POLL_INTERVAL_SEC = 300
+JUDGE_HOUR = 18
 JUDGE_BATCH = 15
 STATE_PATH = os.path.join(os.path.dirname(__file__), "memory", "_connpass", "state.json")
 # 住所は「東京都」を省いて区名から書かれることもあるため、都市名でも拾う
@@ -153,8 +153,14 @@ def judge_pending() -> int:
 
 
 def poll() -> None:
-    """新着を溜め、JUDGE_HOUR以降なら1日1回まとめて判定する。"""
-    collect()
+    """FETCH_HOURSの各時に1回新着を溜め、JUDGE_HOUR以降なら1日1回まとめて判定する。"""
+    now = datetime.now()
+    slot = f"{now.date().isoformat()} {now.hour}"
+    if now.hour in FETCH_HOURS and _load_state().get("fetched_slot") != slot:
+        collect()
+        state = _load_state()
+        state["fetched_slot"] = slot
+        _save_state(state)
     if datetime.now().hour >= JUDGE_HOUR and _load_state().get("judged_date") != date.today().isoformat():
         judge_pending()
 
