@@ -67,6 +67,11 @@ default_weather_location = st.text_input(
     "天気のデフォルト地点(場所を言わずに聞かれた時に使う)", value=cfg["default_weather_location"]
 )
 
+connpass_keywords = st.text_input(
+    "connpassで探す勉強会のキーワード(カンマ区切り。事実メモと合わせて、興味がありそうなものをLilinが教えてくれる)",
+    value=cfg.get("connpass_keywords", ""),
+)
+
 st.subheader("Lilinの記憶(事実メモ)")
 st.caption(
     "毎晩4時頃、前日の会話から自動で整理される(dreaming.py)。聞き間違いなどは文を直して"
@@ -159,6 +164,7 @@ if st.button("保存", type="primary"):
             "style": style,
             "persona_prompt": persona_prompt,
             "default_weather_location": default_weather_location,
+            "connpass_keywords": connpass_keywords,
             "user_profile": cfg["user_profile"],  # 旧方式(事実メモに移行済み)。値だけ保持する
             "pronunciation_entries": pronunciation_entries,
         }

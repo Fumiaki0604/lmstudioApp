@@ -24,6 +24,7 @@ import converse
 import discord_notify
 import dreaming
 import pronunciation_dict
+import connpass
 import seminar
 from converse import filler_phrase, generate, proactive_utterance, task_ack_phrase
 from gate import can_speak_now, in_quiet_hours
@@ -478,6 +479,15 @@ def proactive_loop() -> None:
         last_interaction_time = time.time()
 
 
+def connpass_loop() -> None:
+    while True:
+        try:
+            connpass.poll()
+        except Exception as e:
+            print(f"[error] connpass: {e}")
+        time.sleep(connpass.POLL_INTERVAL_SEC)
+
+
 # ログイン直後はCOEIROINKアプリ側の起動がassistant.py(launchd, RunAtLoad)
 # より遅れることがあり、その場合apply()が接続エラーで失敗して辞書が
 # 一度も反映されないまま1日が過ぎる不具合を実際に確認した(例:「暇」が
@@ -505,6 +515,7 @@ def main() -> None:
     # 待たずに会話を始められるよう、別スレッドで並行して走らせる。
     threading.Thread(target=_apply_pronunciation_dict_with_retry, daemon=True).start()
     threading.Thread(target=proactive_loop, daemon=True).start()
+    threading.Thread(target=connpass_loop, daemon=True).start()
     reactive_loop()
 
 

@@ -487,6 +487,19 @@ def _pick_followup_topic():
     return topic
 
 
+CONNPASS_TOPIC_PROB = 0.5
+
+
+def _pick_connpass_event():
+    if random.random() >= CONNPASS_TOPIC_PROB:
+        return None
+    try:
+        return connpass.next_untold()
+    except Exception as e:
+        print(f"[error] connpass pick: {e}")
+        return None
+
+
 def proactive_utterance(prompt: str) -> str:
     """能動的な一言を生成する。長時間の沈黙の後に呼ばれるため、直前の
     (古くなっていたり認識ミスの断片かもしれない)会話履歴には引っ張られず、
@@ -507,8 +520,14 @@ def proactive_utterance(prompt: str) -> str:
     with _history_lock:
         cfg = config.load()
         system_prompt = _persona_system_prompt(cfg, include_now=True, include_profile=True)
-        topic = _pick_followup_topic()
-        if topic:
+        event = _pick_connpass_event()
+        topic = None if event else _pick_followup_topic()
+        if event:
+            system_prompt += (
+                "\n\n【今回の話しかけ】ユーザーが興味を持ちそうな勉強会をconnpassで見つけたので、"
+                f"自然に教えてあげてください(タイトルは長ければ要約してよい):{connpass.describe(event)}"
+            )
+        elif topic:
             system_prompt += (
                 f"\n\n【今回の話しかけ】前に話していた次の件の続きを、自然に聞いてみてください:"
                 f"{topic['text']}({topic['source'][5:].replace('-', '/')}の話)"
@@ -635,6 +654,10 @@ def main() -> None:
 
     wav_bytes = synthesize(text, speaker["uuid"], style_id)
     play(wav_bytes)
+
+
+# connpass.pyがこのモジュールの_llm_chatを使うため、循環importを避けて定義の後で読み込む
+import connpass  # noqa: E402
 
 
 if __name__ == "__main__":
