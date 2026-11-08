@@ -1,11 +1,11 @@
 """connpassの新着イベントから、ユーザーが興味を持ちそうな勉強会を選んでおく。
 
 新着フィード(ja.atom)は最新10件しか載らないため、assistant.pyのスレッドが
-30分ごとに取りに行き、未見のものだけを判定する。場所(オンライン/東京/神奈川)は
+30分ごとに取りに行って未見のものを溜め、毎日17時以降に1回まとめて判定する。場所(オンライン/東京/神奈川)は
 コードで絞り、興味の判定は事実メモ+設定画面のキーワードを元にLLMが行う。
 選んだものはproactive_utterance()が話題として1件ずつ口頭で紹介する。
 
-使い方(手動で1回取りに行く):
+使い方(手動で取得して即判定する):
     python connpass.py
 """
 import html
@@ -22,7 +22,11 @@ import facts
 from converse import _llm_chat
 
 FEED_URL = "https://connpass.com/explore/ja.atom"
+# フィードは最新10件しか載らず1日1回の取得では大半を取りこぼすため、取得は30分ごとに
+# 行って溜めておき、LLMでの判定と紹介は1日1回(JUDGE_HOUR以降)にまとめる
 POLL_INTERVAL_SEC = 1800
+JUDGE_HOUR = 17
+JUDGE_BATCH = 15
 STATE_PATH = os.path.join(os.path.dirname(__file__), "memory", "_connpass", "state.json")
 # 住所は「東京都」を省いて区名から書かれることもあるため、都市名でも拾う
 PLACE_PATTERNS = ("オンライン", "東京", "神奈川", "横浜", "川崎")
@@ -120,19 +124,39 @@ def _judge(events: list) -> list:
     return picks
 
 
-def poll() -> int:
-    """未見の新着を判定し、選んだ件数を返す。"""
+def collect() -> int:
+    """未見の新着のうち場所が合うものを判定待ちに溜め、溜めた件数を返す(LLMは使わない)。"""
     state = _load_state()
     seen = set(state["seen"])
     new = [e for e in fetch() if e["id"] not in seen]
     state["seen"] += [e["id"] for e in new]
-    candidates = [e for e in new if _place_ok(e) and e["date"] >= date.today().isoformat()]
-    picks = _judge(candidates) if candidates else []
-    state["picks"] = [p for p in state["picks"] if p["date"] >= date.today().isoformat()] + picks
+    state.setdefault("pending", []).extend(e for e in new if _place_ok(e))
+    _save_state(state)
+    return len(new)
+
+
+def judge_pending() -> int:
+    """溜まった候補をまとめて判定し、選んだ件数を返す。"""
+    state = _load_state()
+    today = date.today().isoformat()
+    candidates = [e for e in state.get("pending", []) if e["date"] >= today]
+    picks = []
+    for i in range(0, len(candidates), JUDGE_BATCH):
+        picks += _judge(candidates[i : i + JUDGE_BATCH])
+    state["picks"] = [p for p in state["picks"] if p["date"] >= today] + picks
+    state["pending"] = []
+    state["judged_date"] = today
     _save_state(state)
     for p in picks:
         print(f"[connpass] picked: {p['title']} ({p['reason']})")
     return len(picks)
+
+
+def poll() -> None:
+    """新着を溜め、JUDGE_HOUR以降なら1日1回まとめて判定する。"""
+    collect()
+    if datetime.now().hour >= JUDGE_HOUR and _load_state().get("judged_date") != date.today().isoformat():
+        judge_pending()
 
 
 def next_untold():
@@ -154,4 +178,5 @@ def describe(p: dict) -> str:
 
 
 if __name__ == "__main__":
-    print(poll())
+    collect()
+    print(judge_pending())
