@@ -35,6 +35,16 @@ def _safe_accent(value) -> int:
         return 0
 
 
+def _word_variants(word: str) -> list:
+    """COEIROINKは本文の英数字を全角にしてから辞書を引くため、半角の英単語で
+    登録しても効かない(「connpass」が「シーオーエヌ…」と読まれた)。全角に
+    直し、大文字・小文字の表記揺れ(Connpass/CONNPASS)も合わせて登録する。"""
+    if not any("!" <= ch <= "~" for ch in word):
+        return [word]
+    to_full = lambda w: "".join(chr(ord(ch) + 0xFEE0) if "!" <= ch <= "~" else ch for ch in w)
+    return list(dict.fromkeys(to_full(w) for w in (word, word.lower(), word.upper(), word.capitalize())))
+
+
 def apply(entries: list = None) -> None:
     """entriesを省略するとconfig.jsonの現在値を使う。
     設定画面で保存直後に即反映させたい場合は、保存したentriesをそのまま渡す。"""
@@ -46,12 +56,13 @@ def apply(entries: list = None) -> None:
         if not e.get("word") or not e.get("yomi"):
             continue
         yomi = _to_katakana(e["yomi"])
-        dictionary_words.append({
-            "word": e["word"],
-            "yomi": yomi,
-            "accent": _safe_accent(e.get("accent")),
-            "numMoras": _count_moras(yomi),
-        })
+        for word in _word_variants(e["word"]):
+            dictionary_words.append({
+                "word": word,
+                "yomi": yomi,
+                "accent": _safe_accent(e.get("accent")),
+                "numMoras": _count_moras(yomi),
+            })
     requests.post(
         f"{COEIROINK_URL}/v1/set_dictionary",
         json={"dictionaryWords": dictionary_words},
