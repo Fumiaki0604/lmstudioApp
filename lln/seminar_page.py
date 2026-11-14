@@ -64,6 +64,14 @@ for d, m in seminar.recent(10):
     with st.expander(label):
         if m.get("error"):
             st.error(m["error"])
+        if m.get("status") not in ("recording", "processing"):
+            confirm = st.checkbox("この録音を削除する(音声・要約・感想も消え、元に戻せない)", key=f"del_chk_{d}")
+            if confirm and st.button("削除", key=f"del_btn_{d}", type="primary"):
+                try:
+                    seminar.delete(d)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"削除できませんでした: {e}")
         summary_path = os.path.join(d, "summary.md")
         if os.path.exists(summary_path):
             with open(summary_path) as f:
