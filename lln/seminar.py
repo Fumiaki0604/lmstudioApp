@@ -105,11 +105,11 @@ def is_recording() -> bool:
 
 def delete(d: str) -> None:
     """録音を丸ごと(音声・文字起こし・要約・感想)削除する。録音中・処理中は消さない。"""
+    if os.path.dirname(os.path.abspath(d)) != SEMINAR_DIR:
+        raise ValueError(f"seminars/外のパス: {d}")
     meta = load_meta(d)
     if meta.get("status") in ("recording", "processing") and _alive(meta.get("supervisor_pid")):
         raise RuntimeError("録音中・処理中のものは削除できません")
-    if os.path.dirname(os.path.abspath(d)) != SEMINAR_DIR:
-        raise ValueError(f"seminars/外のパス: {d}")
     shutil.rmtree(d)
 
 
