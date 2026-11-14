@@ -68,6 +68,28 @@ for d, m in seminar.recent(10):
         if os.path.exists(summary_path):
             with open(summary_path) as f:
                 st.markdown(f.read())
+        if os.path.exists(summary_path):
+            kind_col, btn_col = st.columns([3, 1])
+            with kind_col:
+                kind = st.selectbox(
+                    "感想のタイプ",
+                    list(seminar.IMPRESSION_TYPES),
+                    format_func=seminar.IMPRESSION_TYPES.get,
+                    key=f"imp_kind_{d}",
+                    label_visibility="collapsed",
+                )
+            with btn_col:
+                if st.button("感想を書く", key=f"imp_btn_{d}", use_container_width=True):
+                    with st.spinner("感想を書いています…"):
+                        try:
+                            seminar.write_impression(d, kind)
+                        except Exception as e:
+                            st.error(f"感想を書けませんでした: {e}")
+            # 新しい感想が上に来るよう逆順に。コピーしやすいようコードブロックで出す
+            for block in reversed([b for b in seminar.load_impressions(d).split("## ") if b.strip()]):
+                header, _, body = block.partition("\n")
+                st.markdown(f"**感想: {header.strip()}** ({len(body.strip())}字)")
+                st.code(body.strip(), language=None, wrap_lines=True)
         questions = seminar.load_questions(d)
         if questions:
             st.markdown("---\n**録音中に作った質問の候補**")

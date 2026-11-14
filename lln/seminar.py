@@ -264,6 +264,59 @@ def load_questions(d: str) -> str:
         return f.read()
 
 
+IMPRESSION_TYPES = {
+    "positive": "勉強になった(肯定的)",
+    "lilin": "Lilinの感想",
+    "negative": "辛口(否定的)",
+}
+_IMPRESSION_COMMON = (
+    "以下はセミナーの要約です。これを踏まえて、セミナーの感想を200字程度(180〜220字)で書いてください。"
+    "要約の言い換えではなく、具体的な内容(どの話のどこがどうだったか)に触れること。"
+    "Markdownや見出し、前置きは使わず、感想の本文だけを返すこと。\n"
+)
+_IMPRESSION_STANCE = {
+    "positive": (
+        "立場: 参加した受講者本人として、勉強になったという体の肯定的な感想。"
+        "特に学びになった点と、それを今後どう活かしたいかを書く。です・ます調。"
+    ),
+    "negative": (
+        "立場: 参加した受講者本人として、率直で批判的な感想。説明が足りなかった点、根拠が弱い・"
+        "事実と異なる可能性がある点、期待と違った点などを具体的に挙げる。誹謗にはせず、建設的な指摘に留める。です・ます調。"
+    ),
+}
+
+
+def write_impression(d: str, kind: str) -> str:
+    """summary.mdから指定タイプの感想を作り、impressions.mdに追記して返す。"""
+    import config
+    from converse import _llm_chat
+
+    with open(os.path.join(d, "summary.md")) as f:
+        summary = f.read()
+    if kind == "lilin":
+        # 一緒にセミナーを聞いたLilinとして、普段のペルソナの口調で話させる
+        system = (
+            config.load()["persona_prompt"]
+            + "\n\n今回は会話ではなく、ユーザーと一緒に聞いたセミナーについて、あなた自身の感想を書く。"
+            "あなたらしい口調・視点で、面白かった点や引っかかった点を素直に。\n"
+            + _IMPRESSION_COMMON
+        )
+    else:
+        system = _IMPRESSION_COMMON + _IMPRESSION_STANCE[kind]
+    text = _llm_chat(system, [{"role": "user", "content": summary}], temperature=0.7, timeout=300, reasoning_effort="low").strip()
+    with open(os.path.join(d, "impressions.md"), "a") as f:
+        f.write(f"## {IMPRESSION_TYPES[kind]}({datetime.now().strftime('%m/%d %H:%M')})\n{text}\n\n")
+    return text
+
+
+def load_impressions(d: str) -> str:
+    path = os.path.join(d, "impressions.md")
+    if not os.path.exists(path):
+        return ""
+    with open(path) as f:
+        return f.read()
+
+
 # ---------------------------------------------------------------------------
 # 録音後の処理
 # ---------------------------------------------------------------------------
