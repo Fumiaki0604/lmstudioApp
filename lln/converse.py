@@ -189,6 +189,7 @@ BEHAVIOR_RULES = (
     "会話ログや【関連する過去の記憶】に実際に書かれていない具体的な内容"
     "(日付、画像添付、物の形や色などの細部)を、さも覚えているかのように"
     "作り話として付け加えるのは禁止。"
+    "返事の冒頭で相手の発言を「」で引用しておうむ返しにしない(機械的に聞こえるため)。"
     "相手の発言は音声認識の結果なので、同音異義語や似た音への聞き間違いを含む"
     "(例:「髪」→「紙」)。特に「D」「ディー」「デー」「りり」は、あなたの名前「リリ」の"
     "聞き間違いであることが多い(「Dの髪」=「リリの髪」=あなたの髪の話)。"
@@ -442,6 +443,36 @@ def _correct_misrecognition(prompt: str) -> str:
     return fixed
 
 
+PARROT_HEAD_LINES = 3
+PARROT_REST_MAX = 6  # 「はぁ……。」「え、」程度の前置きまで
+
+
+def _strip_parroting(reply: str, prompt: str) -> str:
+    """冒頭数行のうち、ユーザーの発言をほぼそのまま引用している行を削る。
+    プロンプトで禁じても「はぁ……。「(発言そのまま)」？」で始まる返答が2割ほど
+    あり、毎回だと機械的に聞こえるため。"""
+    target = normalize_line(prompt)
+    if len(target) < 4:
+        return reply
+    lines = reply.split("\n")
+    kept, removed = [], []
+    for i, line in enumerate(lines):
+        norm = normalize_line(line)
+        if i < PARROT_HEAD_LINES + 1 and norm and not _STYLE_TAG_RE.match(line + "\n"):
+            match = difflib.SequenceMatcher(None, norm, target).find_longest_match(0, len(norm), 0, len(target))
+            # 引用以外に中身のある行(「〜」って、〜でしょ。等)は返事の一部なので残す
+            rest = re.sub(r"[「」『』？?！!。、…・ー〜]", "", norm[: match.a] + norm[match.a + match.size :])
+            if match.size >= max(4, len(target) * 0.6) and len(rest) <= PARROT_REST_MAX:
+                removed.append(line)
+                continue
+        kept.append(line)
+    stripped = "\n".join(kept).strip()
+    if not removed or not _STYLE_TAG_RE.sub("", stripped, count=1).strip():
+        return reply
+    print(f"[parrot] stripped: {removed}")
+    return stripped
+
+
 def generate(prompt: str) -> str:
     global last_reply_style
     with _history_lock:
@@ -498,6 +529,7 @@ def generate(prompt: str) -> str:
                 if _STYLE_TAG_RE.sub("", stripped, count=1).strip():
                     print(f"[recycled] stripped: {sorted(recycled)}")
                     reply = stripped
+            reply = _strip_parroting(reply, prompt)
         except Exception:
             history.pop()  # 失敗した発言を履歴に残さない(次回以降の連鎖失敗を防ぐ)
             raise
