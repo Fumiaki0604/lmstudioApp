@@ -143,6 +143,23 @@ def start(mode: str, title: str = "") -> str:
     return d
 
 
+def reprocess(d: str) -> None:
+    """失敗した録音の処理を、済んだ文字起こし・部分要約を使い回してやり直す。"""
+    meta = load_meta(d)
+    if meta.get("status") != "error":
+        raise RuntimeError("失敗した録音だけやり直せます")
+    _update_meta(d, status="processing", error=None)
+    with open(os.path.join(d, "supervise.log"), "a") as log:
+        proc = subprocess.Popen(
+            [sys.executable, "-u", os.path.abspath(__file__), "process", d],
+            cwd=BASE_DIR,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    _update_meta(d, supervisor_pid=proc.pid)
+
+
 def stop() -> bool:
     d = active()
     if not d:
@@ -425,29 +442,69 @@ _FINAL_PROMPT = (
 )
 
 
-def summarize(segments: list, title: str) -> str:
-    from converse import _llm_chat  # 重い依存を録音開始・停止の経路に持ち込まないため遅延import
+def _chat_with_fallback(system: str, content: str, timeout: int, reasoning_effort: str) -> str:
+    """返答が空(reasoningで出力上限を使い切った)なら、reasoningを下げてやり直す。"""
+    from converse import EmptyReplyError, _llm_chat  # 重い依存を録音開始・停止の経路に持ち込まないため遅延import
 
+    efforts = ["medium", "low", "none"]
+    for effort in efforts[efforts.index(reasoning_effort):]:
+        try:
+            return _llm_chat(system, [{"role": "user", "content": content}], temperature=0.3, timeout=timeout, reasoning_effort=effort)
+        except EmptyReplyError as e:
+            print(f"[seminar] {e} (reasoning={effort})", flush=True)
+    raise RuntimeError("LLMの返答が空のままでした")
+
+
+def _chunk_path(d: str, i: int) -> str:
+    return os.path.join(d, "chunks", f"chunk_{i:03d}.md")
+
+
+def load_chunks(d: str) -> list:
+    """書き終わった部分要約(処理中の途中経過の表示にも使う)。"""
+    paths = sorted(glob.glob(os.path.join(d, "chunks", "chunk_*.md")))
+    out = []
+    for p in paths:
+        with open(p) as f:
+            out.append(f.read())
+    return out
+
+
+def _progress(d: str, stage: str, done: int = 0, total: int = 0) -> None:
+    _update_meta(d, progress={"stage": stage, "done": done, "total": total, "at": datetime.now().isoformat(timespec="seconds")})
+
+
+def summarize(d: str, segments: list, title: str) -> str:
     chunks = {}
     for s in segments:
         chunks.setdefault(int(s["start"] // CHUNK_SEC), []).append(s)
 
+    os.makedirs(os.path.join(d, "chunks"), exist_ok=True)
     parts = []
-    for i in sorted(chunks):
+    for n, i in enumerate(sorted(chunks)):
+        _progress(d, "部分要約", n, len(chunks))
+        path = _chunk_path(d, i)
+        if os.path.exists(path):  # 途中で失敗した後の再処理では、済んだ部分を使い回す
+            with open(path) as f:
+                parts.append(f.read())
+            continue
         segs = chunks[i]
         text = "\n".join(f"[{_ts(s['start'])}] {s['text']}" for s in segs)
         prompt = _CHUNK_PROMPT.format(start=_ts(segs[0]["start"]), end=_ts(segs[-1]["end"]))
-        part = _llm_chat(prompt, [{"role": "user", "content": text}], temperature=0.3, timeout=600, reasoning_effort="low")
+        part = _chat_with_fallback(prompt, text, 600, "low")
         parts.append(f"## {_ts(segs[0]['start'])}〜{_ts(segs[-1]['end'])}\n{part}")
-        print(f"[seminar] chunk {i + 1}/{len(chunks)} summarized", flush=True)
+        with open(path, "w") as f:
+            f.write(parts[-1])
+        print(f"[seminar] chunk {n + 1}/{len(chunks)} summarized", flush=True)
 
+    _progress(d, "全体のまとめ")
     user_content = f"【タイトルの指定】{title or '(なし)'}\n\n" + "\n\n".join(parts)
-    summary = _llm_chat(_FINAL_PROMPT, [{"role": "user", "content": user_content}], temperature=0.3, timeout=900, reasoning_effort="medium")
-    summary = summary.rstrip() + "\n\n" + _review_doubts(parts, segments, _llm_chat)
+    summary = _chat_with_fallback(_FINAL_PROMPT, user_content, 900, "medium")
+    _progress(d, "疑問点の確認")
+    summary = summary.rstrip() + "\n\n" + _review_doubts(parts, segments)
     return _snap_timestamps(summary, segments)
 
 
-def _review_doubts(parts: list, segments: list, llm_chat) -> str:
+def _review_doubts(parts: list, segments: list) -> str:
     """各部分で挙げた疑問点が、セミナーの後半で解消されたかを全文と照らして判定する。
     部分ごとの要約だけでは、後の部分で説明されたことに気付けないため、全文を渡す。"""
     candidates = []
@@ -459,7 +516,7 @@ def _review_doubts(parts: list, segments: list, llm_chat) -> str:
         return "## 疑問点・要確認事項\n特にありませんでした。"
     transcript = "\n".join(f"[{_ts(s['start'])}] {s['text']}" for s in segments)
     user_content = "【疑問点の候補】\n" + "\n".join(candidates) + "\n\n【文字起こし全文】\n" + transcript
-    result = llm_chat(_DOUBTS_PROMPT, [{"role": "user", "content": user_content}], temperature=0.3, timeout=900, reasoning_effort="medium")
+    result = _chat_with_fallback(_DOUBTS_PROMPT, user_content, 900, "medium")
     print("[seminar] doubts reviewed", flush=True)
     return result.strip()
 
@@ -514,6 +571,7 @@ def process(d: str) -> None:
             raise RuntimeError(f"録音が短すぎます({duration:.1f}秒)。マイクや画面収録の許可を確認してください")
 
         print(f"[seminar] transcribing {_ts(duration)}", flush=True)
+        _progress(d, "文字起こし")
         transcript_json = os.path.join(d, "transcript.json")
         if recorded:
             # 録音中に済ませた5分ファイル分は使い回し、残りだけ文字起こしする
@@ -528,18 +586,20 @@ def process(d: str) -> None:
         with open(transcript_md, "w") as f:
             f.write("\n".join(f"[{_ts(s['start'])}] {s['text']}" for s in segments) + "\n")
 
-        summary = summarize(segments, meta.get("title", ""))
+        summary = summarize(d, segments, meta.get("title", ""))
         summary_md = os.path.join(d, "summary.md")
         with open(summary_md, "w") as f:
             f.write(summary + "\n")
         title = next((l[2:].strip() for l in summary.splitlines() if l.startswith("# ")), "")
 
+        _progress(d, "Discordへ送信")
         discord_notify.post(webhook, _discord_text(summary, meta, duration), files=[summary_md, transcript_md])
 
         # 聞き直し用に圧縮して残す(2時間で約30MB)。元のWAV・PCMは消す
         subprocess.run(["afconvert", "-f", "m4af", "-d", "aac", "-b", "32000", wav, os.path.join(d, "audio.m4a")], check=True)
         for p in [wav] + _segment_paths(d) + glob.glob(os.path.join(d, "part_*.json")):
             os.remove(p)
+        shutil.rmtree(os.path.join(d, "chunks"), ignore_errors=True)
         _update_meta(d, status="done", title=meta.get("title") or title, duration=round(duration))
         print("[seminar] done", flush=True)
     except Exception as e:
@@ -581,6 +641,8 @@ if __name__ == "__main__":
         print("stopped" if stop() else "not recording")
     elif cmd == "supervise":
         supervise(sys.argv[2])
+    elif cmd == "process":
+        process(sys.argv[2])
     elif cmd == "ingest":
         print(ingest(sys.argv[2], " ".join(sys.argv[3:])))
     else:

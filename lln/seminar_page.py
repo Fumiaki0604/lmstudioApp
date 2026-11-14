@@ -8,6 +8,27 @@ import seminar
 
 _STATUS_JA = {"recording": "録音中", "processing": "処理中", "done": "完了", "error": "失敗"}
 
+_STAGES = ["文字起こし", "部分要約", "全体のまとめ", "疑問点の確認", "Discordへ送信"]
+
+
+def _show_progress(m: dict) -> None:
+    prog = m.get("progress") or {"stage": "文字起こし"}
+    stage = prog["stage"]
+    i = _STAGES.index(stage) if stage in _STAGES else 0
+    # 段階ごとの所要時間の目安に合わせて重み付けし、部分要約は件数で按分する
+    weights = [0.05, 0.55, 0.2, 0.15, 0.05]
+    value = sum(weights[:i])
+    detail = ""
+    if stage == "部分要約" and prog.get("total"):
+        value += weights[i] * prog["done"] / prog["total"]
+        detail = f" {prog['done']}/{prog['total']}"
+    ended = m.get("ended")
+    elapsed = f" · 停止から{int((datetime.now() - datetime.fromisoformat(ended)).total_seconds()) // 60}分" if ended else ""
+    st.progress(min(value, 1.0), text=f"処理中: {stage}{detail}(段階{i + 1}/{len(_STAGES)}){elapsed}")
+    if st.button("表示を更新", key=f"prog_refresh_{m.get('started')}"):
+        st.rerun()
+
+
 st.title("セミナー")
 
 rec_dir = seminar.active()
@@ -64,6 +85,11 @@ for d, m in seminar.recent(10):
     with st.expander(label):
         if m.get("error"):
             st.error(m["error"])
+            if st.button("やり直す(済んだ文字起こし・部分要約は使い回す)", key=f"retry_{d}"):
+                seminar.reprocess(d)
+                st.rerun()
+        if m.get("status") == "processing":
+            _show_progress(m)
         if m.get("status") not in ("recording", "processing"):
             confirm = st.checkbox("この録音を削除する(音声・要約・感想も消え、元に戻せない)", key=f"del_chk_{d}")
             if confirm and st.button("削除", key=f"del_btn_{d}", type="primary"):
@@ -98,6 +124,14 @@ for d, m in seminar.recent(10):
                 header, _, body = block.partition("\n")
                 st.markdown(f"**感想: {header.strip()}** ({len(body.strip())}字)")
                 st.code(body.strip(), language=None, wrap_lines=True)
+        if not os.path.exists(summary_path):
+            # 要約ができるまでは、書き終わった部分要約を途中経過として出す
+            for chunk in seminar.load_chunks(d):
+                st.markdown(chunk.replace("## ", "#### ", 1))
+        transcript_path = os.path.join(d, "transcript.md")
+        if os.path.exists(transcript_path) and st.toggle("文字起こし全文を表示", key=f"tr_{d}"):
+            with open(transcript_path) as f:
+                st.text_area("文字起こし", f.read(), height=400, label_visibility="collapsed", key=f"tr_text_{d}")
         questions = seminar.load_questions(d)
         if questions:
             st.markdown("---\n**録音中に作った質問の候補**")

@@ -41,6 +41,10 @@ LLM_CHAT_URL = "http://127.0.0.1:8000/v1/chat/completions"
 MODEL = "mlx-community/Qwen3.6-35B-A3B-4bit"
 
 
+class EmptyReplyError(RuntimeError):
+    pass
+
+
 def _llm_chat(
     system_prompt: str, messages: list, temperature: float = 0.7, timeout: int = 60, reasoning_effort: str = "none"
 ) -> str:
@@ -88,7 +92,12 @@ def _llm_chat(
         timeout=timeout,
     )
     res.raise_for_status()
-    return res.json()["choices"][0]["message"]["content"].strip()
+    choice = res.json()["choices"][0]
+    content = choice["message"].get("content")
+    if not content:
+        # reasoningで出力上限を使い切ると本文がNoneで返る(長文の統合要約で実際に発生)
+        raise EmptyReplyError(f"LLMの返答が空でした(finish_reason={choice.get('finish_reason')})")
+    return content.strip()
 
 
 # ---------------------------------------------------------------------------
