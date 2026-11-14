@@ -188,10 +188,15 @@ BEHAVIOR_RULES = (
     "口説いたり誘惑したりすることはしない。"
     "会話ログや【関連する過去の記憶】に実際に書かれていない具体的な内容"
     "(日付、画像添付、物の形や色などの細部)を、さも覚えているかのように"
-    "作り話として付け加えるのは禁止。相手の発言の中に意味が分からない"
-    "単語や聞き取れていない可能性のある言葉(音声認識の誤認識かもしれない)"
-    "があっても、知ったかぶりで適当な意味をでっち上げるのではなく、素直に"
-    "「え、何それ？」のように聞き返す。"
+    "作り話として付け加えるのは禁止。"
+    "相手の発言は音声認識の結果なので、同音異義語や似た音への聞き間違いを含む"
+    "(例:「髪」→「紙」)。特に「D」「ディー」「デー」「りり」は、あなたの名前「リリ」の"
+    "聞き間違いであることが多い(「Dの髪」=「リリの髪」=あなたの髪の話)。"
+    "不自然な言葉があれば、まず直前の会話の流れと音の近さから本来の言葉を推測し、"
+    "推測できたら、聞き間違いには一切触れず、最初から正しい言葉で言われたものとして普通に返事をする"
+    "(「D」「紙」のような誤った言葉を返事の中で繰り返さない)。聞き間違いは音声認識のせいであり、"
+    "相手の発音や言い方を責めない。"
+    "どうしても推測できない時だけ、適当な意味をでっち上げずに「え、何それ？」と聞き返す。"
 )
 
 
@@ -399,11 +404,50 @@ def _merge_consecutive_roles(messages: list) -> list:
 # ---------------------------------------------------------------------------
 
 
+_CORRECT_PROMPT = (
+    "音声認識で書き起こしたユーザーの発言を、聞き間違いを直した文にして返す。"
+    "ユーザーは音声アシスタント「リリ(リリン)」と話している。\n"
+    "- 同音異義語・似た音の誤り(例:紙→髪)を直前の会話の流れから直す。"
+    "「D」「ディー」「デー」「りり」等は名前「リリ」の誤りであることが多い\n"
+    "- 自信がない箇所や、正しそうな箇所は変えない。言い回しの整形や要約はしない\n"
+    "- 直した文だけを1行で返す(説明や引用符は付けない)"
+)
+CORRECT_CONTEXT_MESSAGES = 4
+
+
+def _correct_misrecognition(prompt: str) -> str:
+    """返答の前に、音声認識の聞き間違い(「リリの髪」→「Dの紙」等)を文脈から直す。
+    会話の生成と同じ呼び出しで「推測して読み替えて」と指示しても、読み替えた上で
+    聞き間違いに突っ込む返答になりがちだったため、専用の短い呼び出しに分けている。
+    直した文を履歴・ログに残す(誤った語が次回以降の文脈に残らないように)。"""
+    context = "\n".join(
+        f"{'リリ' if m['role'] == 'assistant' else 'ユーザー'}: {m['content'][:200]}"
+        for m in history[-CORRECT_CONTEXT_MESSAGES:]
+    )
+    try:
+        fixed = _llm_chat(
+            _CORRECT_PROMPT,
+            [{"role": "user", "content": f"[直前の会話]\n{context or '(なし)'}\n\n[今回の発言]\n{prompt}"}],
+            temperature=0,
+            timeout=15,
+        ).splitlines()[0].strip()
+    except Exception as e:
+        print(f"[correct] failed: {e}")
+        return prompt
+    # 長さが大きく変わるのは整形・要約・応答をしてしまった時なので採用しない
+    if not fixed or abs(len(fixed) - len(prompt)) > max(6, len(prompt) // 2):
+        return prompt
+    if fixed != prompt:
+        print(f"[correct] {prompt} -> {fixed}")
+    return fixed
+
+
 def generate(prompt: str) -> str:
     global last_reply_style
     with _history_lock:
         recent_replies = [m["content"] for m in history if m["role"] == "assistant"]
 
+        prompt = _correct_misrecognition(prompt)
         _record("user", prompt)
 
         try:
